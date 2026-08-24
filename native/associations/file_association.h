@@ -7,6 +7,7 @@
 struct FileAssociationStatus {
   bool registered = false;
   bool current = false;
+  bool default_application = false;
   std::wstring executable_path;
   std::wstring registered_executable_path;
 };

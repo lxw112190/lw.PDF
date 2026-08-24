@@ -2,6 +2,7 @@
 
 #include <Shellapi.h>
 #include <ShlObj.h>
+#include <Shlwapi.h>
 
 #include <array>
 #include <optional>
@@ -178,6 +179,15 @@ std::wstring CapabilitiesAssociationsKey() {
 void NotifyAssociationChanged() {
   SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
 }
+
+bool IsCurrentPdfDefault(const std::wstring& executable_path) {
+  std::vector<wchar_t> buffer(32768U, L'\0');
+  DWORD characters = static_cast<DWORD>(buffer.size());
+  const auto result = AssocQueryStringW(ASSOCF_NOTRUNCATE,
+      ASSOCSTR_EXECUTABLE, L".pdf", L"open", buffer.data(), &characters);
+  return SUCCEEDED(result) && !buffer.empty() &&
+         _wcsicmp(buffer.data(), executable_path.c_str()) == 0;
+}
 }  // namespace
 
 std::wstring BuildAssociationOpenCommand(
@@ -219,6 +229,7 @@ FileAssociationStatus GetPdfFileAssociationStatus() {
                         kProgId);
   }
   status.current = status.registered && complete;
+  status.default_application = IsCurrentPdfDefault(status.executable_path);
   return status;
 }
 

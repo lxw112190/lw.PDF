@@ -96,6 +96,6 @@ if(BUILD_TESTING)
   target_compile_definitions(lw_pdf_native_tests PRIVATE
     WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   target_compile_options(lw_pdf_native_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
-  target_link_libraries(lw_pdf_native_tests PRIVATE shell32 advapi32 bcrypt)
+  target_link_libraries(lw_pdf_native_tests PRIVATE shell32 shlwapi advapi32 bcrypt)
   add_test(NAME lw_pdf_native_tests COMMAND lw_pdf_native_tests)
 endif()

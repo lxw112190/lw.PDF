@@ -150,6 +150,8 @@ void WebViewHost::Create(HWND window, const std::wstring& content_folder, std::s
       return environment->CreateCoreWebView2Controller(window_, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>([this, content_folder](HRESULT status, ICoreWebView2Controller* controller) -> HRESULT {
         if (FAILED(status) || !controller) return status;
         controller_ = controller; controller_->get_CoreWebView2(&webview_);
+        Microsoft::WRL::ComPtr<ICoreWebView2Controller4> controller4;
+        if (SUCCEEDED(controller_.As(&controller4))) controller4->put_AllowExternalDrop(TRUE);
         Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings; if (SUCCEEDED(webview_->get_Settings(&settings))) { settings->put_AreDevToolsEnabled(FALSE); settings->put_IsStatusBarEnabled(FALSE); settings->put_AreHostObjectsAllowed(FALSE); settings->put_IsWebMessageEnabled(TRUE); }
         Microsoft::WRL::ComPtr<ICoreWebView2_3> webview3; if (SUCCEEDED(webview_.As(&webview3))) webview3->SetVirtualHostNameToFolderMapping(L"app.lwpdf", content_folder.c_str(), COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
         webview_->AddScriptToExecuteOnDocumentCreated(kBridgeScript, nullptr);

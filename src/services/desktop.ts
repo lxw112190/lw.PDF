@@ -1,6 +1,7 @@
 export interface FileAssociationStatus {
   registered: boolean
   current: boolean
+  defaultApplication: boolean
   executablePath: string
   registeredExecutablePath: string | null
 }

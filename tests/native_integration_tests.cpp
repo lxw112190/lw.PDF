@@ -21,6 +21,9 @@ int main() {
   Check(BuildAssociationOpenCommand(L"C:\\Tools\\lw.PDF.exe") ==
             L"\"C:\\Tools\\lw.PDF.exe\" \"%1\"",
         "association command quotes executable and argument");
+  const auto association_status = GetPdfFileAssociationStatus();
+  Check(!association_status.executable_path.empty(),
+        "queries native registration and default-application status");
 
   const auto root = std::filesystem::temp_directory_path() / "lw-pdf-native-test";
   std::filesystem::create_directories(root);

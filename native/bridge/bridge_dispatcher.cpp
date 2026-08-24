@@ -81,6 +81,7 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
       if (!EmptyObject(params)) { reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid association parameters").dump()); return; }
       const auto status = GetPdfFileAssociationStatus();
       reply(Success(id, {{"registered", status.registered}, {"current", status.current},
+          {"defaultApplication", status.default_application},
           {"executablePath", WideToUtf8(status.executable_path)},
           {"registeredExecutablePath", status.registered_executable_path.empty()
               ? json(nullptr) : json(WideToUtf8(status.registered_executable_path))}}).dump());
