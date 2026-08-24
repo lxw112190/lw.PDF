@@ -1,0 +1,7 @@
+<script setup lang="ts">
+import { ref } from 'vue'
+import { viewerState } from '../stores/viewerState'
+defineProps<{ name: string; viewer: any }>(); const emit = defineEmits<{ open: [] }>(); const page = ref('')
+function go(viewer: any) { viewer?.setPage(Number(page.value)); page.value = '' }
+</script>
+<template><header class="toolbar"><strong class="brand">lw.PDF</strong><button @click="emit('open')">打开</button><span class="divider"/><button title="上一页" :disabled="!viewerState.pageCount" @click="viewer?.previousPage()">‹</button><form @submit.prevent="go(viewer)"><input class="page-input" :placeholder="String(viewerState.pageNumber)" :disabled="!viewerState.pageCount" v-model="page" /></form><span class="muted">/ {{ viewerState.pageCount }}</span><button title="下一页" :disabled="!viewerState.pageCount" @click="viewer?.nextPage()">›</button><span class="divider"/><button :disabled="!viewerState.pageCount" @click="viewer?.zoomOut()">−</button><span class="scale">{{ Math.round(viewerState.scale * 100) }}%</span><button :disabled="!viewerState.pageCount" @click="viewer?.zoomIn()">+</button><button :disabled="!viewerState.pageCount" @click="viewer?.fitWidth()">适合宽度</button><button :disabled="!viewerState.pageCount" @click="viewer?.fitPage()">适合页面</button><span class="toolbar-spacer"/><button :disabled="!viewerState.pageCount" @click="viewerState.sidebarVisible = !viewerState.sidebarVisible">侧栏</button><button :disabled="!viewerState.pageCount" @click="viewerState.searchVisible = true">搜索</button></header></template>

@@ -1,0 +1,1 @@
+* { box-sizing: border-box } body, #app { width: 100vw; height: 100vh; margin: 0; overflow: hidden } button, input { font: inherit } button { border: 0; background: transparent; color: inherit; cursor: pointer } button:disabled { cursor: default; opacity: .42 } .sr-only { position: fixed; left: -10000px }
