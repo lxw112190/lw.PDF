@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  windows-native:
+    name: Windows x64 Native
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Configure C++ project
+        run: cmake -S . -B build-native -A x64 -DBUILD_TESTING=ON
+      - name: Build native application
+        run: cmake --build build-native --config Release
+      - name: Run native tests
+        run: ctest --test-dir build-native -C Release --output-on-failure
+      - name: Create Windows release package
+        shell: powershell
+        run: .\scripts\package-release.ps1
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v7
+        with:
+          name: lw.PDF-windows-x64-${{ github.sha }}
+          path: |
+            release/*.zip
+            release/*.sha256
+          if-no-files-found: error
+          retention-days: 30

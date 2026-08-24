@@ -1,0 +1,32 @@
+#pragma code_page(65001)
+#include <windows.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+ FILEFLAGS 0x0L
+ FILEOS VOS__WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "080404B0"
+    BEGIN
+      VALUE "CompanyName", "天天代码码天天"
+      VALUE "FileDescription", "简洁轻量的本地 PDF 查看器"
+      VALUE "FileVersion", "@PROJECT_VERSION@"
+      VALUE "InternalName", "lw.PDF"
+      VALUE "LegalCopyright", "Copyright © 2026 天天代码码天天"
+      VALUE "OriginalFilename", "lw.PDF.exe"
+      VALUE "ProductName", "lw.PDF"
+      VALUE "ProductVersion", "@PROJECT_VERSION@"
+      VALUE "Comments", "MIT License"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x0804, 1200
+  END
+END

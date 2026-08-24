@@ -1,5 +1,6 @@
 import type { PdfSource } from '../types/pdf'
-interface NativeFile { id: string; name: string; size: number; mime: string; url: string }; interface OpenFileResult { files: NativeFile[] }
+export interface NativeFile { id: string; name: string; size: number; mime: string; url: string }
+interface OpenFileResult { files: NativeFile[] }
 let currentGrantId: string | undefined
 export const isDesktop = typeof window !== 'undefined' && !!window.lw
 export async function openDesktopPdf(): Promise<PdfSource | null> { if (!window.lw) return null; const result = await window.lw.invoke<OpenFileResult>('dialog.openFile', { multiple: false, filters: [{ name: 'PDF 文档', extensions: ['pdf'] }] }); const file = result.files?.[0]; return file ? { kind: 'url', name: file.name, url: file.url, grantId: file.id, size: file.size } : null }

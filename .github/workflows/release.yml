@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    name: Publish Windows x64 Release
+    runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify release tag and project version
+        shell: powershell
+        run: |
+          $version = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
+          $expectedTag = "v$version"
+          if ($env:RELEASE_TAG -ne $expectedTag) {
+            throw "Release tag '$env:RELEASE_TAG' does not match package.json version '$expectedTag'."
+          }
+          git rev-parse --verify "refs/tags/$env:RELEASE_TAG"
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Configure C++ project
+        run: cmake -S . -B build-native -A x64 -DBUILD_TESTING=ON
+      - name: Build native application
+        run: cmake --build build-native --config Release
+      - name: Run native tests
+        run: ctest --test-dir build-native -C Release --output-on-failure
+      - name: Create release assets
+        shell: powershell
+        run: .\scripts\package-release.ps1
+      - name: Publish GitHub Release
+        shell: powershell
+        run: |
+          $assets = Get-ChildItem -LiteralPath release -File |
+            Where-Object { $_.Extension -in '.zip', '.sha256' } |
+            ForEach-Object { $_.FullName }
+          if ($assets.Count -ne 2) {
+            throw "Expected one ZIP package and one SHA256 file."
+          }
+          gh release create $env:RELEASE_TAG $assets `
+            --repo $env:GITHUB_REPOSITORY `
+            --verify-tag `
+            --generate-notes `
+            --title "lw.PDF $env:RELEASE_TAG"
