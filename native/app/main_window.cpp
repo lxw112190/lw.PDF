@@ -1,6 +1,7 @@
 #include "app/main_window.h"
 
 #include "bridge/bridge_dispatcher.h"
+#include "common/native_log.h"
 #include "resources/frontend_bundle.h"
 #include "runtime/file_grant.h"
 #include "webview/webview_host.h"
@@ -46,8 +47,19 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
         auto* bridge = state->bridge.get(); auto* webview = state->webview.get();
         webview->Create(window, folder, state->grants,
             [bridge](const std::string& request, WebViewHost::Reply reply) { bridge->Dispatch(request, std::move(reply)); },
-            [bridge, webview] { if (const auto event = bridge->TakeLaunchEvent()) webview->PostJson(*event); });
+            [bridge, webview] {
+              try {
+                if (const auto event = bridge->TakeLaunchEvent(); event &&
+                    !webview->PostJson(*event)) {
+                  NativeLogError("application.launch_file.delivery_failed");
+                }
+              } catch (const std::exception& error) {
+                NativeLogError(std::string("application.launch_file.failed: ") +
+                               error.what());
+              }
+            });
       } catch (const std::exception& error) {
+        NativeLogError(std::string("application.frontend.failed: ") + error.what());
         MessageBoxA(window, error.what(), "lw.PDF", MB_OK | MB_ICONERROR); PostMessageW(window, WM_CLOSE, 0, 0);
       }
       return 0;
@@ -58,8 +70,22 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
       const auto drop = reinterpret_cast<HDROP>(wparam);
       const auto length = DragQueryFileW(drop, 0, nullptr, 0);
       std::wstring path(length + 1, L'\0'); DragQueryFileW(drop, 0, path.data(), length + 1); path.resize(length); DragFinish(drop);
-      try { const auto grant = state->grants->Create(path); state->webview->PostJson(nlohmann::json{{"type", "event"}, {"name", "file.opened"}, {"payload", {{"id", grant.id}, {"name", grant.name}, {"size", grant.size}, {"mime", "application/pdf"}, {"url", grant.url}}}}.dump()); }
-      catch (...) { MessageBoxW(window, L"请拖入可读取的 PDF 文件。", L"lw.PDF", MB_OK | MB_ICONINFORMATION); }
+      try {
+        const auto grant = state->grants->Create(path);
+        NativeLogInfo("file.drop.granted size=" + std::to_string(grant.size));
+        NativeLogDebug("file.drop.grant id=" + grant.id + " name=" + grant.name);
+        if (!state->webview->PostJson(nlohmann::json{{"type", "event"},
+              {"name", "file.opened"}, {"payload", {{"id", grant.id},
+              {"name", grant.name}, {"size", grant.size},
+              {"mime", "application/pdf"}, {"url", grant.url}}}}.dump())) {
+          state->grants->Revoke(grant.id);
+          throw std::runtime_error("WebView is not ready for dropped file");
+        }
+      } catch (const std::exception& error) {
+        NativeLogError(std::string("file.drop.failed: ") + error.what());
+        MessageBoxW(window, L"请拖入可读取的 PDF 文件。", L"lw.PDF",
+                    MB_OK | MB_ICONINFORMATION);
+      }
       return 0;
     }
     case WM_DESTROY: delete state; SetWindowLongPtrW(window, GWLP_USERDATA, 0); PostQuitMessage(0); return 0;
@@ -78,11 +104,19 @@ int RunMainWindow(HINSTANCE instance, const std::optional<std::wstring>& launch_
       GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR | LR_SHARED));
   window_class.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON,
       GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CXSMICON), LR_DEFAULTCOLOR | LR_SHARED));
-  if (!RegisterClassExW(&window_class)) return 1;
+  if (!RegisterClassExW(&window_class)) {
+    NativeLogError("window.register_class.failed error=" +
+                   std::to_string(GetLastError()));
+    return 1;
+  }
   const auto window = CreateWindowExW(0, kClassName, L"lw.PDF", WS_OVERLAPPEDWINDOW,
       CW_USEDEFAULT, CW_USEDEFAULT, 1180, 760, nullptr, nullptr, instance,
       const_cast<std::optional<std::wstring>*>(&launch_path));
-  if (!window) return 1;
+  if (!window) {
+    NativeLogError("window.create.failed error=" +
+                   std::to_string(GetLastError()));
+    return 1;
+  }
   DragAcceptFiles(window, TRUE); ShowWindow(window, SW_SHOW); UpdateWindow(window);
   MSG message{}; while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
   return static_cast<int>(message.wParam);

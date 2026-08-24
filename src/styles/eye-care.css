@@ -1,0 +1,76 @@
+:root[data-eye-care="true"] {
+  background: #dfddd5;
+}
+
+:root[data-eye-care="true"] .toolbar {
+  background: #ebeae5;
+  border-color: #d4d1c8;
+}
+
+:root[data-eye-care="true"] .toolbar button:hover:not(:disabled) {
+  background: #dedcd4;
+}
+
+:root[data-eye-care="true"] .divider {
+  background: #cbc8bf;
+}
+
+:root[data-eye-care="true"] .page-input {
+  border-color: #c8c4b9;
+  background: #f5f3ed;
+}
+
+:root[data-eye-care="true"] .sidebar {
+  border-color: #d5d1c7;
+  background: #f5f3ed;
+}
+
+:root[data-eye-care="true"] .sidebar-tabs,
+:root[data-eye-care="true"] .thumbnail-list,
+:root[data-eye-care="true"] .outline {
+  background: #f5f3ed;
+}
+
+:root[data-eye-care="true"] .sidebar-tabs .active {
+  background: #e8e6df;
+}
+
+:root[data-eye-care="true"] .thumbnail {
+  background: #eeece5;
+}
+
+:root[data-eye-care="true"] .thumbnail.selected {
+  background: #e5e6df;
+}
+
+:root[data-eye-care="true"] .pdf-viewer-container,
+:root[data-eye-care="true"] .empty-state {
+  background: #dfddd5;
+}
+
+:root[data-eye-care="true"] .pdfViewer .page {
+  background: #f3eee2;
+  box-shadow: 0 2px 8px #3f3a2e2b;
+}
+
+:root[data-eye-care="true"] .pdfViewer .page .canvasWrapper canvas,
+:root[data-eye-care="true"] .thumbnail canvas {
+  filter: sepia(0.09) brightness(0.96) contrast(0.97) saturate(0.96);
+}
+
+:root[data-eye-care="true"] .textLayer {
+  --highlight-bg-color: rgb(232 183 48 / 0.36);
+  --highlight-selected-bg-color: rgb(220 126 34 / 0.5);
+}
+
+:root[data-eye-care="true"] .textLayer ::selection {
+  background: rgb(55 125 195 / 0.35);
+}
+
+:root[data-eye-care="true"] .loading,
+:root[data-eye-care="true"] .search-box,
+:root[data-eye-care="true"] .app-menu-popover {
+  border-color: #d1cdc2;
+  background: #f8f6f0;
+}
+

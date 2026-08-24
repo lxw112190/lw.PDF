@@ -13,6 +13,7 @@ A lightweight Windows desktop PDF viewer powered by Vue 3, TypeScript, PDF.js, a
 - Continuous scrolling, text selection, and link navigation
 - Page navigation, zoom, fit-to-width, and fit-to-page modes
 - Full-text search, lazy-loaded thumbnails, and document outlines
+- One-click eye-care mode with subtly warmer PDF pages and reduced white glare
 - Native FileGrant with HTTP Range support for large PDFs without IPC or Base64 copies
 - About dialog, application icon, dynamic document titles, and Windows file associations
 
@@ -23,7 +24,7 @@ npm install
 npm run dev
 ```
 
-Browser mode loads PDFs through the browser file picker. Desktop mode obtains a temporary FileGrant URL through the controlled C++ Native Bridge.
+Browser mode loads PDFs through the browser file picker. In desktop mode, file selection, command-line opening, and drag-and-drop all create temporary FileGrant URLs in the native C++ host. The web layer never reads a desktop file or copies an entire PDF into JavaScript memory.
 
 ## Build the Native Windows Application
 
@@ -48,6 +49,12 @@ ctest --test-dir build-native -C Release --output-on-failure
 
 GitHub Actions runs dependency installation, builds, and tests for every push and pull request.
 
+Native tests focus on HTTP Range boundaries, bounded file streams, a 128 MiB PDF, and continuous FileGrant switching so the desktop data path cannot regress to whole-file copying.
+
+## Diagnostic Logs
+
+Native logs are written to `%LocalAppData%\lw.PDF\logs\lw.PDF.log`. Release builds record only key lifecycle, desktop-drop, Bridge failure, and WebView2 events. Debug builds also record FileGrant, Range, and HRESULT details. At 2 MiB, the log rotates to `lw.PDF.previous.log`; only the current and previous logs are retained.
+
 ## CI and Releases
 
 - Every push and pull request verifies both the frontend and Windows x64 native builds.
@@ -59,7 +66,11 @@ GitHub Actions runs dependency installation, builds, and tests for every push an
 ## Architecture
 
 ```text
-Vue UI → PDF.js Viewer → C++ Native Bridge → FileGrant / HTTP Range
+Windows file dialog / command line / drop
+                    ↓
+       C++ Native FileGrant
+                    ↓
+PDF.js ← HTTPS Range responses from bounded native streams
 ```
 
 ## Contact and Support

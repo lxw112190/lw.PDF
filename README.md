@@ -13,6 +13,7 @@
 - 连续滚动阅读、文本选择和链接跳转
 - 页码导航、缩放、适合宽度和适合页面
 - 关键词搜索、缩略图懒加载和文档目录
+- 单开关护眼模式：轻微暖化 PDF 页面并降低纯白背景刺激
 - Native FileGrant + HTTP Range：大型 PDF 不经过 IPC/Base64 复制
 - 关于窗口、应用图标、动态文档标题与 Windows 文件关联
 
@@ -23,7 +24,7 @@ npm install
 npm run dev
 ```
 
-浏览器模式通过文件选择器载入 PDF；桌面模式通过受控的 C++ Native Bridge 获取临时 FileGrant URL。
+浏览器模式通过文件选择器载入 PDF；桌面模式的文件选择、命令行打开和拖放全部由 C++ Native 宿主生成临时 FileGrant URL。网页层不会读取桌面文件，也不会把整份 PDF 复制进 JavaScript 内存。
 
 ## 构建 Windows 原生程序
 
@@ -48,6 +49,12 @@ ctest --test-dir build-native -C Release --output-on-failure
 
 GitHub Actions 会在推送和拉取请求时自动执行依赖安装、构建和测试。
 
+Native 测试重点覆盖 HTTP Range 边界、受限文件流、128 MiB 大 PDF 和连续 FileGrant 切换，防止桌面文件通路退回整文件复制。
+
+## 诊断日志
+
+Native 日志位于 `%LocalAppData%\lw.PDF\logs\lw.PDF.log`。Release 版本仅记录关键生命周期、桌面拖放、Bridge 失败和 WebView2 错误；Debug 版本额外记录 FileGrant、Range 与 HRESULT 细节。日志达到 2 MiB 后会轮换为 `lw.PDF.previous.log`，最多保留当前和上一份日志。
+
 ## CI 与发布
 
 - 每次推送和拉取请求都会验证前端与 Windows x64 Native 构建。
@@ -59,7 +66,11 @@ GitHub Actions 会在推送和拉取请求时自动执行依赖安装、构建�
 ## 架构
 
 ```text
-Vue UI → PDF.js Viewer → C++ Native Bridge → FileGrant / HTTP Range
+Windows file dialog / command line / drop
+                    ↓
+       C++ Native FileGrant
+                    ↓
+PDF.js ← HTTPS Range responses from bounded native streams
 ```
 
 ## 联系与支持

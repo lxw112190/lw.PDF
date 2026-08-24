@@ -1,6 +1,7 @@
 #include "bridge/bridge_dispatcher.h"
 
 #include "associations/file_association.h"
+#include "common/native_log.h"
 #include "common/utf8.h"
 #include "dialogs/file_dialog.h"
 #include "runtime/file_grant.h"
@@ -41,12 +42,15 @@ std::optional<std::string> BridgeDispatcher::TakeLaunchEvent() {
   const auto path = *launch_path_;
   launch_path_.reset();
   const auto grant = grants_->Create(path);
+  NativeLogDebug("file.launch.grant id=" + grant.id + " name=" + grant.name +
+                 " size=" + std::to_string(grant.size));
   return json{{"type", "event"}, {"name", "file.opened"},
               {"payload", PublicGrant(grant)}}.dump();
 }
 
 void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
   std::string id;
+  std::string method = "unparsed";
   try {
     const auto value = json::parse(request);
     if (!value.is_object() || value.value("type", "") != "request" ||
@@ -56,17 +60,20 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
       return;
     }
     id = value.at("id").get<std::string>();
-    const auto method = value.at("method").get<std::string>();
+    method = value.at("method").get<std::string>();
     const auto params = value.value("params", json::object());
     if (id.empty() || id.size() > 128 || method.empty() || method.size() > 64 ||
         !params.is_object()) {
       reply(Error(id, "BRIDGE_INVALID_REQUEST", "Invalid bridge request").dump());
       return;
     }
+    NativeLogDebug("bridge.request method=" + method + " id=" + id);
     if (method == "dialog.openFile") {
       const auto path = ChoosePdfFile(owner_);
       if (!path) { reply(Success(id, {{"files", json::array()}}).dump()); return; }
       const auto grant = grants_->Create(*path);
+      NativeLogDebug("file.dialog.grant id=" + grant.id + " name=" + grant.name +
+                     " size=" + std::to_string(grant.size));
       reply(Success(id, {{"files", json::array({PublicGrant(grant)})}}).dump());
       return;
     }
@@ -74,7 +81,9 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
       if (!params.contains("id") || !params.at("id").is_string()) {
         reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid file permission").dump()); return;
       }
-      grants_->Revoke(params.at("id").get<std::string>());
+      const auto grant_id = params.at("id").get<std::string>();
+      grants_->Revoke(grant_id);
+      NativeLogDebug("file.grant.revoked id=" + grant_id);
       reply(Success(id, nullptr).dump()); return;
     }
     if (method == "association.status") {
@@ -87,11 +96,33 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
               ? json(nullptr) : json(WideToUtf8(status.registered_executable_path))}}).dump());
       return;
     }
-    if (method == "association.register") { RegisterPdfFileAssociations(); reply(Success(id, nullptr).dump()); return; }
-    if (method == "association.unregister") { UnregisterPdfFileAssociations(); reply(Success(id, nullptr).dump()); return; }
+    if (method == "association.register") { RegisterPdfFileAssociations(); NativeLogInfo("association.registered"); reply(Success(id, nullptr).dump()); return; }
+    if (method == "association.unregister") { UnregisterPdfFileAssociations(); NativeLogInfo("association.unregistered"); reply(Success(id, nullptr).dump()); return; }
     if (method == "association.openDefaultApps") {
       if (!OpenDefaultAppsSettings(owner_)) { reply(Error(id, "DEFAULT_APPS_OPEN_FAILED", "Cannot open Windows default apps settings").dump()); return; }
       reply(Success(id, nullptr).dump()); return;
+    }
+    if (method == "diagnostics.error") {
+      const auto area = params.value("area", "");
+      const auto message = params.value("message", "");
+      if (area != "pdf.open" || message.empty() || message.size() > 1000U) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid diagnostic event").dump());
+        return;
+      }
+      NativeLogError("frontend." + area + ".failed: " + message);
+      reply(Success(id, nullptr).dump());
+      return;
+    }
+    if (method == "diagnostics.info") {
+      const auto area = params.value("area", "");
+      const auto message = params.value("message", "");
+      if (area != "pdf.open" || message.empty() || message.size() > 200U) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid diagnostic event").dump());
+        return;
+      }
+      NativeLogInfo("frontend." + area + ".ready " + message);
+      reply(Success(id, nullptr).dump());
+      return;
     }
     if (method == "app.openExternal") {
       const auto url = params.value("url", "");
@@ -102,7 +133,11 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
       reply(Success(id, nullptr).dump()); return;
     }
     reply(Error(id, "BRIDGE_UNKNOWN_METHOD", "Unknown desktop method").dump());
-  } catch (const std::exception&) {
+  } catch (const std::exception& error) {
+    NativeLogError("bridge." + method + ".failed: " + error.what());
+    reply(Error(id, "BRIDGE_OPERATION_FAILED", "Native operation failed").dump());
+  } catch (...) {
+    NativeLogError("bridge." + method + ".failed: unknown exception");
     reply(Error(id, "BRIDGE_OPERATION_FAILED", "Native operation failed").dump());
   }
 }

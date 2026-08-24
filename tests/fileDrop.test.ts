@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { isPdfFile } from '../src/services/fileDrop'
 import { openBrowserPdf } from '../src/services/native'
+import { createPdfLoadingSource, nativeRangeChunkSize } from '../src/services/pdfLoadingSource'
 
 describe('PDF drag and drop', () => {
   it('accepts PDF names case-insensitively even when Windows omits the MIME type', () => {
@@ -19,5 +20,19 @@ describe('PDF drag and drop', () => {
     const source = await openBrowserPdf(file)
     expect(source.kind).toBe('data')
     if (source.kind === 'data') expect(Array.from(source.data)).toEqual([0x25, 0x50, 0x44, 0x46])
+  })
+
+  it('forces native FileGrant URLs to use on-demand Range requests', () => {
+    expect(createPdfLoadingSource({
+      kind: 'url',
+      name: 'large.pdf',
+      url: 'https://file.lwpdf/grant/document.pdf',
+      grantId: 'grant',
+      size: 1024 * 1024 * 1024,
+    })).toEqual({
+      url: 'https://file.lwpdf/grant/document.pdf',
+      disableStream: true,
+      rangeChunkSize: nativeRangeChunkSize,
+    })
   })
 })
