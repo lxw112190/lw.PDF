@@ -13,8 +13,10 @@ A lightweight Windows desktop PDF viewer powered by Vue 3, TypeScript, PDF.js, a
 - Continuous scrolling, text selection, and link navigation
 - Page navigation, zoom, fit-to-width, and fit-to-page modes
 - Full-text search, lazy-loaded thumbnails, and document outlines
+- Recent files plus page, zoom, and in-page reading-position restoration by PDF fingerprint
 - One-click eye-care mode with subtly warmer PDF pages and reduced white glare
 - Native FileGrant with HTTP Range support for large PDFs without IPC or Base64 copies
+- Bundled PDF.js CMaps and standard fonts for PDFs with non-embedded Chinese fonts
 - About dialog, application icon, dynamic document titles, and Windows file associations
 
 ## Local Development
@@ -50,6 +52,8 @@ ctest --test-dir build-native -C Release --output-on-failure
 GitHub Actions runs dependency installation, builds, and tests for every push and pull request.
 
 Native tests focus on HTTP Range boundaries, bounded file streams, a 128 MiB PDF, and continuous FileGrant switching so the desktop data path cannot regress to whole-file copying.
+
+Native code alone stores recent file paths in `%LocalAppData%\lw.PDF\recent.json`; the web layer receives only opaque IDs. Reopening a recent file validates it again and issues a fresh FileGrant. Reading positions are stored in WebView2 local storage by PDF fingerprint, with at most 100 document records retained.
 
 ## Diagnostic Logs
 

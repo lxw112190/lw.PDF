@@ -1,4 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/package.json")
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/package.json" LWPDF_PACKAGE_JSON)
 string(JSON LWPDF_PACKAGE_VERSION GET "${LWPDF_PACKAGE_JSON}" version)
 project(lw_PDF VERSION "${LWPDF_PACKAGE_VERSION}" LANGUAGES CXX)
@@ -75,7 +77,8 @@ add_executable(lw_pdf WIN32
   native/common/native_log.cpp
   native/dialogs/file_dialog.cpp native/resources/frontend_bundle.cpp
   native/runtime/bounded_file_stream.cpp native/runtime/file_grant.cpp
-  native/runtime/http_range.cpp native/webview/webview_host.cpp
+  native/runtime/http_range.cpp native/runtime/recent_files.cpp
+  native/webview/webview_host.cpp
   resources/lw-pdf.rc "${LWPDF_GENERATED_DIR}/version.rc"
   "${LWPDF_GENERATED_DIR}/frontend_bundle.rc")
 add_dependencies(lw_pdf lwpdf_frontend_bundle)
@@ -95,11 +98,13 @@ if(BUILD_TESTING)
     native/associations/file_association.cpp
     native/runtime/bounded_file_stream.cpp
     native/runtime/file_grant.cpp
-    native/runtime/http_range.cpp)
+    native/runtime/http_range.cpp
+    native/runtime/recent_files.cpp)
   target_include_directories(lw_pdf_native_tests PRIVATE native)
   target_compile_definitions(lw_pdf_native_tests PRIVATE
     WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
   target_compile_options(lw_pdf_native_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
-  target_link_libraries(lw_pdf_native_tests PRIVATE ole32 shell32 shlwapi advapi32 bcrypt)
+  target_link_libraries(lw_pdf_native_tests PRIVATE nlohmann_json::nlohmann_json
+    ole32 shell32 shlwapi advapi32 bcrypt)
   add_test(NAME lw_pdf_native_tests COMMAND lw_pdf_native_tests)
 endif()

@@ -4,6 +4,7 @@
 #include "common/native_log.h"
 #include "resources/frontend_bundle.h"
 #include "runtime/file_grant.h"
+#include "runtime/recent_files.h"
 #include "webview/webview_host.h"
 
 #include <Shellapi.h>
@@ -18,6 +19,7 @@ constexpr wchar_t kClassName[] = L"lw.PDF.MainWindow";
 struct State {
   std::unique_ptr<BridgeDispatcher> bridge;
   std::shared_ptr<PdfFileGrantManager> grants;
+  std::shared_ptr<RecentFileStore> recent_files;
   std::unique_ptr<WebViewHost> webview;
 };
 
@@ -37,8 +39,11 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
       const auto* launch_path = create ? static_cast<const std::optional<std::wstring>*>(create->lpCreateParams) : nullptr;
       auto owned = std::make_unique<State>();
       owned->grants = std::make_shared<PdfFileGrantManager>();
+      owned->recent_files =
+          std::make_shared<RecentFileStore>(DefaultRecentFilesPath());
       owned->webview = std::make_unique<WebViewHost>();
-      owned->bridge = std::make_unique<BridgeDispatcher>(window, owned->grants);
+      owned->bridge = std::make_unique<BridgeDispatcher>(
+          window, owned->grants, owned->recent_files);
       if (launch_path) owned->bridge->SetLaunchPath(*launch_path);
       state = owned.release(); SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
       try {

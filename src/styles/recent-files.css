@@ -1,0 +1,90 @@
+.empty-content {
+  display: grid;
+  width: min(440px, calc(100% - 40px));
+  justify-items: center;
+}
+
+.recent-files {
+  width: 100%;
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid #d9dfe5;
+}
+
+.recent-files header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 5px;
+  color: #687583;
+  font-size: 12px;
+}
+
+.recent-clear {
+  padding: 3px 5px;
+  color: #71808e;
+  font-size: 12px;
+}
+
+.recent-clear:hover {
+  color: #30465b;
+  background: #e3e8ed;
+  border-radius: 3px;
+}
+
+.recent-file {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 7px;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.recent-file:hover {
+  background: #e5eaf0;
+}
+
+.recent-file-icon {
+  padding: 4px 3px;
+  border: 1px solid #bec8d2;
+  border-radius: 3px;
+  color: #6c7783;
+  font-size: 8px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.recent-file-name {
+  overflow: hidden;
+  color: #354454;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent-file time,
+.recent-loading {
+  color: #84909b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.recent-loading {
+  margin: 10px 0 0;
+  text-align: center;
+}
+
+@media (max-height: 650px) {
+  .empty-content > .empty-icon,
+  .empty-content > h1,
+  .empty-content > p {
+    display: none;
+  }
+
+  .recent-files {
+    margin-top: 18px;
+  }
+}

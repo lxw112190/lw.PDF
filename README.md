@@ -13,8 +13,10 @@
 - 连续滚动阅读、文本选择和链接跳转
 - 页码导航、缩放、适合宽度和适合页面
 - 关键词搜索、缩略图懒加载和文档目录
+- 最近文件列表，以及按 PDF 指纹恢复页码、缩放和页内位置
 - 单开关护眼模式：轻微暖化 PDF 页面并降低纯白背景刺激
 - Native FileGrant + HTTP Range：大型 PDF 不经过 IPC/Base64 复制
+- 内置 PDF.js CMap 与标准字体资源，兼容未嵌入中文字体的 PDF
 - 关于窗口、应用图标、动态文档标题与 Windows 文件关联
 
 ## 本地开发
@@ -50,6 +52,8 @@ ctest --test-dir build-native -C Release --output-on-failure
 GitHub Actions 会在推送和拉取请求时自动执行依赖安装、构建和测试。
 
 Native 测试重点覆盖 HTTP Range 边界、受限文件流、128 MiB 大 PDF 和连续 FileGrant 切换，防止桌面文件通路退回整文件复制。
+
+最近文件路径仅由 Native 保存在 `%LocalAppData%\lw.PDF\recent.json`，网页层只接收不透明 ID；重新打开时会重新校验文件并签发新的 FileGrant。阅读位置保存在 WebView2 本地存储中，以 PDF 指纹区分文档，最多保留 100 份记录。
 
 ## 诊断日志
 

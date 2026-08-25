@@ -24,6 +24,10 @@ $version = (Get-Content -LiteralPath (Join-Path $projectRoot "package.json") -Ra
 if ($version -notmatch '^\d+\.\d+\.\d+$') {
   throw "Invalid package version: $version"
 }
+$executableVersion = (Get-Item -LiteralPath $executable).VersionInfo.ProductVersion
+if ($executableVersion -ne $version) {
+  throw "Executable version '$executableVersion' does not match package version '$version'. Reconfigure and rebuild the native project."
+}
 
 $packageName = "lw.PDF-v$version-windows-x64"
 $packageRoot = Join-Path $outputRoot $packageName

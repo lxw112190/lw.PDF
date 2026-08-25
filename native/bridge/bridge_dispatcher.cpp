@@ -5,6 +5,7 @@
 #include "common/utf8.h"
 #include "dialogs/file_dialog.h"
 #include "runtime/file_grant.h"
+#include "runtime/recent_files.h"
 
 #include <Shellapi.h>
 #include <nlohmann/json.hpp>
@@ -30,8 +31,12 @@ json PublicGrant(const PdfFileGrant& grant) {
 bool EmptyObject(const json& value) { return value.is_object() && value.empty(); }
 }
 
-BridgeDispatcher::BridgeDispatcher(HWND owner, std::shared_ptr<PdfFileGrantManager> grants)
-    : owner_(owner), grants_(std::move(grants)) {}
+BridgeDispatcher::BridgeDispatcher(
+    HWND owner, std::shared_ptr<PdfFileGrantManager> grants,
+    std::shared_ptr<RecentFileStore> recent_files)
+    : owner_(owner),
+      grants_(std::move(grants)),
+      recent_files_(std::move(recent_files)) {}
 
 void BridgeDispatcher::SetLaunchPath(const std::optional<std::wstring>& path) {
   launch_path_ = path;
@@ -85,6 +90,63 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
       grants_->Revoke(grant_id);
       NativeLogDebug("file.grant.revoked id=" + grant_id);
       reply(Success(id, nullptr).dump()); return;
+    }
+    if (method == "recent.list") {
+      if (!EmptyObject(params)) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid recent file parameters").dump());
+        return;
+      }
+      auto files = json::array();
+      for (const auto& file : recent_files_->List()) {
+        files.push_back({{"id", file.id}, {"name", file.name},
+                         {"lastOpened", file.last_opened}});
+      }
+      reply(Success(id, {{"files", std::move(files)}}).dump());
+      return;
+    }
+    if (method == "recent.confirmOpen") {
+      if (!params.contains("grantId") || !params.at("grantId").is_string()) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid file permission").dump());
+        return;
+      }
+      const auto grant_id = params.at("grantId").get<std::string>();
+      const auto grant = grants_->Find(grant_id);
+      if (!grant) {
+        reply(Error(id, "FILE_GRANT_NOT_FOUND", "File permission is no longer available").dump());
+        return;
+      }
+      const auto recent = recent_files_->Confirm(*grant);
+      NativeLogDebug("recent.confirmed id=" + recent.id + " name=" + recent.name);
+      reply(Success(id, {{"file", {{"id", recent.id}, {"name", recent.name},
+          {"lastOpened", recent.last_opened}}}}).dump());
+      return;
+    }
+    if (method == "recent.open") {
+      if (!params.contains("id") || !params.at("id").is_string()) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid recent file").dump());
+        return;
+      }
+      const auto recent_id = params.at("id").get<std::string>();
+      const auto path = recent_files_->Resolve(recent_id);
+      if (!path) {
+        reply(Error(id, "RECENT_FILE_UNAVAILABLE", "Recent PDF file is unavailable").dump());
+        return;
+      }
+      const auto grant = grants_->Create(*path);
+      NativeLogDebug("recent.open.grant recent_id=" + recent_id +
+                     " grant_id=" + grant.id + " name=" + grant.name);
+      reply(Success(id, {{"file", PublicGrant(grant)}}).dump());
+      return;
+    }
+    if (method == "recent.clear") {
+      if (!EmptyObject(params)) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid recent file parameters").dump());
+        return;
+      }
+      recent_files_->Clear();
+      NativeLogInfo("recent.cleared");
+      reply(Success(id, nullptr).dump());
+      return;
     }
     if (method == "association.status") {
       if (!EmptyObject(params)) { reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid association parameters").dump()); return; }

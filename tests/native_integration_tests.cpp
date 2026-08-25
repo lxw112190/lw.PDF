@@ -4,6 +4,7 @@
 #include "runtime/bounded_file_stream.h"
 #include "runtime/file_grant.h"
 #include "runtime/http_range.h"
+#include "runtime/recent_files.h"
 
 #include <array>
 #include <cstdint>
@@ -193,6 +194,54 @@ int main() {
     current_id = next.id;
   }
   Check(grants.Revoke(current_id), "revokes the final switched document grant");
+
+  const auto recent_store_path = root / "recent.json";
+  RecentFileStore recent_files(recent_store_path, 3);
+  const auto first_recent_grant = grants.Create(pdf);
+  const auto first_recent = recent_files.Confirm(first_recent_grant);
+  Check(first_recent.id.size() == 32U && first_recent.name == grant.name,
+        "stores a recent PDF behind an opaque identifier");
+  const auto resolved_recent = recent_files.Resolve(first_recent.id);
+  Check(resolved_recent && *resolved_recent == first_recent_grant.path,
+        "resolves a recent identifier only inside the native process");
+
+  const auto second_recent_grant = grants.Create(ranged_pdf);
+  const auto second_recent = recent_files.Confirm(second_recent_grant);
+  auto recent_list = recent_files.List();
+  Check(recent_list.size() == 2U && recent_list.front().id == second_recent.id,
+        "orders recent files by the latest successful open");
+  const auto refreshed_first = recent_files.Confirm(first_recent_grant);
+  recent_list = recent_files.List();
+  Check(refreshed_first.id == first_recent.id &&
+            recent_list.front().id == first_recent.id &&
+            recent_list.size() == 2U,
+        "deduplicates a file and preserves its opaque recent identifier");
+
+  const auto third_pdf = root / "third.pdf";
+  const auto fourth_pdf = root / "fourth.pdf";
+  std::ofstream(third_pdf, std::ios::binary) << "%PDF-1.4\nthird";
+  std::ofstream(fourth_pdf, std::ios::binary) << "%PDF-1.4\nfourth";
+  recent_files.Confirm(grants.Create(third_pdf));
+  const auto fourth_recent = recent_files.Confirm(grants.Create(fourth_pdf));
+  recent_list = recent_files.List();
+  Check(recent_list.size() == 3U && recent_list.front().id == fourth_recent.id &&
+            !recent_files.Resolve(second_recent.id).has_value(),
+        "keeps only the configured number of recent files");
+
+  RecentFileStore reloaded_recent_files(recent_store_path, 3);
+  recent_list = reloaded_recent_files.List();
+  Check(recent_list.size() == 3U && recent_list.front().id == fourth_recent.id,
+        "persists and reloads recent files");
+  std::filesystem::remove(fourth_pdf);
+  recent_list = reloaded_recent_files.List();
+  Check(recent_list.size() == 2U &&
+            !reloaded_recent_files.Resolve(fourth_recent.id).has_value(),
+        "prunes recent files that no longer exist");
+  reloaded_recent_files.Clear();
+  Check(reloaded_recent_files.List().empty(), "clears the recent file list");
+  RecentFileStore cleared_recent_files(recent_store_path, 3);
+  Check(cleared_recent_files.List().empty(),
+        "persists the cleared recent file list");
 
   std::filesystem::remove_all(root);
   return failures == 0 ? 0 : 1;

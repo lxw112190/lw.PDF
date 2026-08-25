@@ -29,10 +29,27 @@ describe('PDF drag and drop', () => {
       url: 'https://file.lwpdf/grant/document.pdf',
       grantId: 'grant',
       size: 1024 * 1024 * 1024,
-    })).toEqual({
+    }, 'https://app.lwpdf')).toEqual({
       url: 'https://file.lwpdf/grant/document.pdf',
       disableStream: true,
       rangeChunkSize: nativeRangeChunkSize,
+      cMapUrl: 'https://app.lwpdf/pdfjs/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: 'https://app.lwpdf/pdfjs/standard_fonts/',
+      useSystemFonts: true,
+    })
+  })
+
+  it('supplies PDF.js font assets for browser-loaded PDFs too', () => {
+    expect(createPdfLoadingSource({
+      kind: 'data',
+      name: 'non-embedded-chinese-fonts.pdf',
+      data: new Uint8Array([1, 2, 3]),
+    }, 'https://app.lwpdf')).toMatchObject({
+      cMapUrl: 'https://app.lwpdf/pdfjs/cmaps/',
+      cMapPacked: true,
+      standardFontDataUrl: 'https://app.lwpdf/pdfjs/standard_fonts/',
+      useSystemFonts: true,
     })
   })
 })
