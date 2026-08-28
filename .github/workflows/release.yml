@@ -46,7 +46,9 @@ jobs:
       - name: Build native application
         run: cmake --build build-native --config Release
       - name: Run native tests
-        run: ctest --test-dir build-native -C Release --output-on-failure
+        # -R keeps qpdf's own (interactive) tests, registered by its
+        # FetchContent subproject, out of this project's test suite.
+        run: ctest --test-dir build-native -C Release --output-on-failure -R "^lw_pdf"
       - name: Create release assets
         shell: powershell
         run: .\scripts\package-release.ps1

@@ -49,6 +49,7 @@ Copy-Item -LiteralPath $executable -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "README.md") -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "README.en.md") -Destination $packageRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "LICENSE") -Destination $packageRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md") -Destination $packageRoot
 $assetDirectory = Join-Path $packageRoot "docs\assets"
 New-Item -ItemType Directory -Force -Path $assetDirectory | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot "docs\assets\sponsor.jpg") -Destination $assetDirectory

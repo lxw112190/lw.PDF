@@ -15,9 +15,13 @@ A lightweight Windows desktop PDF viewer powered by Vue 3, TypeScript, PDF.js, a
 - Full-text search, lazy-loaded thumbnails, and document outlines
 - Recent files plus page, zoom, and in-page reading-position restoration by PDF fingerprint
 - One-click eye-care mode with subtly warmer PDF pages and reduced white glare
+- Scanned-PDF page organization: reverse all pages in one click
+- Page rotation: rotate the current page, all pages, or a custom range by 90° left, 180°, or 90° right
 - Native FileGrant with HTTP Range support for large PDFs without IPC or Base64 copies
 - Bundled PDF.js CMaps and standard fonts for PDFs with non-embedded Chinese fonts
 - About dialog, application icon, dynamic document titles, and Windows file associations
+
+> Page organization is currently supported in the Windows desktop app only.
 
 ## Local Development
 
@@ -37,6 +41,8 @@ cmake --build build-native --config Release --target lw_pdf
 
 The executable is generated at `build-native\Release\lw.PDF.exe`. Frontend assets are embedded into the executable during the build and extracted to the current user's LocalAppData cache at runtime. `lw.Web2Exe` and other packaging runtimes are not required.
 
+Page organization is built on [qpdf](https://qpdf.readthedocs.io/) (libqpdf 12.2.0) and performs structural PDF transformations inside the native process: page content is never re-encoded, the whole PDF is never copied into JavaScript, and results are always saved as a new file without overwriting the original. Rotations are relative, stacking on top of any existing `/Rotate` entries. Organizing password-protected PDFs is not supported yet.
+
 ## Windows Integration
 
 The native lw.PDF host registers `.pdf` Open With entries and a context-menu command under HKEY_CURRENT_USER. It never changes the current default PDF application. If the executable is moved, the Windows Integration dialog detects the stale path and offers to repair the registration.
@@ -46,7 +52,7 @@ The native lw.PDF host registers `.pdf` Open With entries and a context-menu com
 ```powershell
 npm test
 npm run build
-ctest --test-dir build-native -C Release --output-on-failure
+ctest --test-dir build-native -C Release --output-on-failure -R "^lw_pdf"
 ```
 
 GitHub Actions runs dependency installation, builds, and tests for every push and pull request.

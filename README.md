@@ -15,9 +15,13 @@
 - 关键词搜索、缩略图懒加载和文档目录
 - 最近文件列表，以及按 PDF 指纹恢复页码、缩放和页内位置
 - 单开关护眼模式：轻微暖化 PDF 页面并降低纯白背景刺激
+- 扫描 PDF 页面整理：一键反转全部页面顺序
+- 页面旋转：支持当前页、全部页面和指定页面左转 90°、180°、右转 90°
 - Native FileGrant + HTTP Range：大型 PDF 不经过 IPC/Base64 复制
 - 内置 PDF.js CMap 与标准字体资源，兼容未嵌入中文字体的 PDF
 - 关于窗口、应用图标、动态文档标题与 Windows 文件关联
+
+> 页面整理目前仅 Windows 桌面版支持。
 
 ## 本地开发
 
@@ -37,6 +41,8 @@ cmake --build build-native --config Release --target lw_pdf
 
 生成文件为 `build-native\Release\lw.PDF.exe`。前端资源会在构建时嵌入 EXE，运行时自动释放到当前用户的 LocalAppData 缓存；无需 `lw.Web2Exe` 或其他打包运行时。
 
+页面整理基于 [qpdf](https://qpdf.readthedocs.io/)（libqpdf 12.2.0）在 Native 进程内做 PDF 结构级变换，不重编码页面内容、不把整份 PDF 复制进 JavaScript，并始终“另存为新 PDF”，不会覆盖原文件。旋转采用相对方向，已有 `/Rotate` 的页面会在其基础上叠加。整理受密码保护的 PDF 暂不支持。
+
 ## Windows 集成
 
 lw.PDF 的 Native 宿主使用 HKEY_CURRENT_USER 注册 `.pdf` 打开方式与右键菜单，不会修改 Windows 的默认 PDF 应用。移动 EXE 后，Windows 集成窗口会提示修复关联。
@@ -46,7 +52,7 @@ lw.PDF 的 Native 宿主使用 HKEY_CURRENT_USER 注册 `.pdf` 打开方式与�
 ```powershell
 npm test
 npm run build
-ctest --test-dir build-native -C Release --output-on-failure
+ctest --test-dir build-native -C Release --output-on-failure -R "^lw_pdf"
 ```
 
 GitHub Actions 会在推送和拉取请求时自动执行依赖安装、构建和测试。

@@ -4,6 +4,7 @@
 #include "common/native_log.h"
 #include "common/utf8.h"
 #include "dialogs/file_dialog.h"
+#include "pdf/pdf_transformer.h"
 #include "runtime/file_grant.h"
 #include "runtime/recent_files.h"
 
@@ -11,6 +12,8 @@
 #include <nlohmann/json.hpp>
 
 #include <stdexcept>
+#include <thread>
+#include <utility>
 
 using nlohmann::json;
 namespace {
@@ -29,6 +32,15 @@ json PublicGrant(const PdfFileGrant& grant) {
           {"mime", "application/pdf"}, {"url", grant.url}};
 }
 bool EmptyObject(const json& value) { return value.is_object() && value.empty(); }
+
+struct TransformCompletion {
+  std::string id;
+  std::string kind;
+  std::wstring output_path;
+  BridgeDispatcher::Reply reply;
+  PdfTransformResult result;
+  ULONGLONG duration_ms = 0;
+};
 }
 
 BridgeDispatcher::BridgeDispatcher(
@@ -51,6 +63,61 @@ std::optional<std::string> BridgeDispatcher::TakeLaunchEvent() {
                  " size=" + std::to_string(grant.size));
   return json{{"type", "event"}, {"name", "file.opened"},
               {"payload", PublicGrant(grant)}}.dump();
+}
+
+void BridgeDispatcher::DiscardTransformCompletion(LPARAM payload) {
+  delete reinterpret_cast<TransformCompletion*>(payload);
+}
+
+void BridgeDispatcher::CompleteTransform(LPARAM payload) {
+  std::unique_ptr<TransformCompletion> completion(
+      reinterpret_cast<TransformCompletion*>(payload));
+  transform_busy_ = false;
+  if (completion->result.error != PdfTransformError::None) {
+    const char* code = "PDF_TRANSFORM_FAILED";
+    const char* message = "PDF transform failed";
+    switch (completion->result.error) {
+      case PdfTransformError::SourceUnavailable:
+        code = "PDF_SOURCE_UNAVAILABLE";
+        message = "PDF source is no longer available";
+        break;
+      case PdfTransformError::PasswordRequired:
+        code = "PDF_PASSWORD_REQUIRED";
+        message = "Password-protected PDFs are not supported yet";
+        break;
+      case PdfTransformError::PageRangeInvalid:
+        code = "PDF_PAGE_RANGE_INVALID";
+        message = "Invalid page range";
+        break;
+      case PdfTransformError::OutputWriteFailed:
+        code = "PDF_OUTPUT_WRITE_FAILED";
+        message = "Cannot write the output PDF";
+        break;
+      case PdfTransformError::SameFile:
+        message = "无法覆盖原文件，请选择其他保存位置。";
+        break;
+      default:
+        break;
+    }
+    NativeLogError("pdf.transform.failed kind=" + completion->kind +
+                   " error=" + std::to_string(static_cast<int>(completion->result.error)) +
+                   " duration_ms=" + std::to_string(completion->duration_ms));
+    completion->reply(Error(completion->id, code, message).dump());
+    return;
+  }
+  try {
+    const auto new_grant = grants_->Create(completion->output_path);
+    NativeLogInfo("pdf.transform.completed kind=" + completion->kind +
+                  " pages=" + std::to_string(completion->result.page_count) +
+                  " size=" + std::to_string(new_grant.size) +
+                  " duration_ms=" + std::to_string(completion->duration_ms));
+    completion->reply(Success(completion->id,
+                              {{"cancelled", false}, {"file", PublicGrant(new_grant)}}).dump());
+  } catch (const std::exception& error) {
+    NativeLogError("pdf.transform.grant.failed: " + std::string(error.what()));
+    completion->reply(Error(completion->id, "PDF_OUTPUT_WRITE_FAILED",
+                            "Cannot access the transformed PDF").dump());
+  }
 }
 
 void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
@@ -146,6 +213,100 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
       recent_files_->Clear();
       NativeLogInfo("recent.cleared");
       reply(Success(id, nullptr).dump());
+      return;
+    }
+    if (method == "pdf.transformSaveAs") {
+      if (transform_busy_) {
+        reply(Error(id, "PDF_TRANSFORM_FAILED", "PDF transform already in progress").dump());
+        return;
+      }
+      if (!params.contains("sourceGrantId") || !params.at("sourceGrantId").is_string() ||
+          !params.contains("operation") || !params.at("operation").is_object()) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid transform request").dump());
+        return;
+      }
+      const auto grant_id = params.at("sourceGrantId").get<std::string>();
+      const auto operation = params.at("operation");
+      const auto kind = operation.value("kind", "");
+      PdfTransformRequest transform_request;
+      std::wstring name_suffix;
+      if (kind == "reversePages") {
+        transform_request.kind = PdfTransformKind::ReversePages;
+        name_suffix = L"_倒序";
+      } else if (kind == "rotatePages") {
+        transform_request.kind = PdfTransformKind::RotatePages;
+        name_suffix = L"_旋转";
+        const auto direction = operation.value("direction", "");
+        if (direction == "left90") transform_request.rotation = PdfRotation::Left90;
+        else if (direction == "right90") transform_request.rotation = PdfRotation::Right90;
+        else if (direction == "rotate180") transform_request.rotation = PdfRotation::Rotate180;
+        else {
+          reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid rotation direction").dump());
+          return;
+        }
+        if (!operation.contains("pages") || !operation.at("pages").is_object()) {
+          reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid page selection").dump());
+          return;
+        }
+        const auto pages = operation.at("pages");
+        const auto pages_kind = pages.value("kind", "");
+        if (pages_kind == "all") {
+          transform_request.pages.kind = PdfPageSelectionKind::All;
+        } else if (pages_kind == "single") {
+          if (!pages.contains("page") || !pages.at("page").is_number_unsigned() ||
+              pages.at("page").get<std::uint64_t>() < 1 ||
+              pages.at("page").get<std::uint64_t>() > UINT32_MAX) {
+            reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid page number").dump());
+            return;
+          }
+          transform_request.pages.kind = PdfPageSelectionKind::Single;
+          transform_request.pages.page = pages.at("page").get<std::uint32_t>();
+        } else if (pages_kind == "range") {
+          if (!pages.contains("value") || !pages.at("value").is_string() ||
+              pages.at("value").get<std::string>().empty()) {
+            reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid page range").dump());
+            return;
+          }
+          transform_request.pages.kind = PdfPageSelectionKind::Range;
+          transform_request.pages.range = pages.at("value").get<std::string>();
+        } else {
+          reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid page selection kind").dump());
+          return;
+        }
+      } else {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid transform kind").dump());
+        return;
+      }
+      const auto grant = grants_->Find(grant_id);
+      if (!grant) {
+        reply(Error(id, "PDF_SOURCE_UNAVAILABLE", "PDF source is no longer available").dump());
+        return;
+      }
+      transform_busy_ = true;
+      const auto started = GetTickCount64();
+      NativeLogInfo("pdf.transform.start kind=" + kind);
+      const auto suggested = grant->path.stem().wstring() + name_suffix + L".pdf";
+      const auto output_path = ChoosePdfSavePath(owner_, suggested);
+      if (!output_path) {
+        transform_busy_ = false;
+        NativeLogInfo("pdf.transform.cancelled kind=" + kind);
+        reply(Success(id, {{"cancelled", true}}).dump());
+        return;
+      }
+      auto completion = std::make_unique<TransformCompletion>(TransformCompletion{
+          id, kind, *output_path, std::move(reply), {}, 0});
+      const auto input_path = grant->path.wstring();
+      const auto worker_owner = owner_;
+      std::thread([worker_owner, input_path, transform_request, started,
+                   completion = std::move(completion)]() mutable {
+        completion->result = TransformPdf(input_path, completion->output_path, transform_request);
+        completion->duration_ms = GetTickCount64() - started;
+        auto* payload = completion.release();
+        if (!PostMessageW(worker_owner, BridgeDispatcher::kTransformCompleteMessage, 0,
+                          reinterpret_cast<LPARAM>(payload))) {
+          BridgeDispatcher::DiscardTransformCompletion(reinterpret_cast<LPARAM>(payload));
+        }
+      }).detach();
       return;
     }
     if (method == "association.status") {

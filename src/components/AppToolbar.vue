@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { appearanceState, toggleEyeCareMode } from '../services/eyeCare'
+import { isDesktop } from '../services/native'
 import { viewerState } from '../stores/viewerState'
-defineProps<{ name: string; viewer: any }>(); const emit = defineEmits<{ open: []; about: []; integration: [] }>(); const page = ref(''); const menuOpen = ref(false)
+defineProps<{ name: string; viewer: any }>(); const emit = defineEmits<{ open: []; about: []; integration: []; pageTools: [] }>(); const page = ref(''); const menuOpen = ref(false)
 function go(viewer: any) { viewer?.setPage(Number(page.value)); page.value = '' }
 function toggleEyeCare() { toggleEyeCareMode(); menuOpen.value = false }
+function openPageTools() { menuOpen.value = false; emit('pageTools') }
 </script>
 <template>
   <header class="toolbar">
@@ -36,6 +38,12 @@ function toggleEyeCare() { toggleEyeCareMode(); menuOpen.value = false }
           护眼模式
         </button>
         <span class="menu-separator" role="separator"/>
+        <button
+          role="menuitem"
+          :disabled="!viewerState.pageCount || !isDesktop || viewerState.transforming"
+          :title="!isDesktop ? '页面整理功能当前仅桌面版支持' : undefined"
+          @click="openPageTools"
+        >页面整理…</button>
         <button role="menuitem" @click="menuOpen = false; emit('integration')">Windows 集成…</button>
         <button role="menuitem" @click="menuOpen = false; emit('about')">关于 lw.PDF</button>
       </div>

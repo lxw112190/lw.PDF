@@ -69,6 +69,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
       }
       return 0;
     }
+    case BridgeDispatcher::kTransformCompleteMessage:
+      if (state && state->bridge) state->bridge->CompleteTransform(lparam);
+      else BridgeDispatcher::DiscardTransformCompletion(lparam);
+      return 0;
     case WM_SIZE: if (state) state->webview->Resize(); return 0;
     case WM_DROPFILES: {
       if (!state) return 0;

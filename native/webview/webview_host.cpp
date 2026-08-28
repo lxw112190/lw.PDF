@@ -116,7 +116,7 @@ const wchar_t kBridgeScript[] = LR"JS((() => {
   }, on(name, callback) { const set = listeners.get(name) || new Set(); set.add(callback); listeners.set(name, set); },
   off(name, callback) { listeners.get(name)?.delete(callback); } });
   chrome.webview.addEventListener('message', event => { const message = event.data;
-    if (message?.type === 'response') { const item = pending.get(message.id); if (!item) return; pending.delete(message.id); message.error ? item.reject(new Error(message.error.message || 'Native request failed')) : item.resolve(message.result); return; }
+    if (message?.type === 'response') { const item = pending.get(message.id); if (!item) return; pending.delete(message.id); message.error ? item.reject(Object.assign(new Error(message.error.message || 'Native request failed'), { code: message.error.code })) : item.resolve(message.result); return; }
     if (message?.type === 'event') for (const listener of listeners.get(message.name) || []) listener(message.payload);
   });
 })();)JS";

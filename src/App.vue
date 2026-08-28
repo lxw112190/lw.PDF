@@ -4,6 +4,7 @@ import AboutDialog from './components/AboutDialog.vue'
 import AppToolbar from './components/AppToolbar.vue'
 import EmptyState from './components/EmptyState.vue'
 import LoadingOverlay from './components/LoadingOverlay.vue'
+import PageToolsDialog from './components/PageToolsDialog.vue'
 import PdfSidebar from './components/PdfSidebar.vue'
 import PdfViewerHost from './components/PdfViewerHost.vue'
 import SearchBox from './components/SearchBox.vue'
@@ -17,6 +18,12 @@ import {
   type NativeFile,
 } from './services/native'
 import {
+  reversePdfPages,
+  rotatePdfPages,
+  type PdfPageSelection,
+  type PdfRotationDirection,
+} from './services/pdfTransform'
+import {
   clearRecentFiles,
   loadRecentFiles,
   openRecentFile,
@@ -28,8 +35,36 @@ const viewer = ref<any>(null)
 const input = ref<HTMLInputElement | null>(null)
 const aboutVisible = ref(false)
 const integrationVisible = ref(false)
+const pageToolsVisible = ref(false)
 const dropActive = ref(false)
 let dragDepth = 0
+
+type PageToolsPayload =
+  | { kind: 'reversePages' }
+  | { kind: 'rotatePages'; direction: PdfRotationDirection; pages: PdfPageSelection }
+
+async function applyPageTools(payload: PageToolsPayload) {
+  const grantId = viewerState.currentGrantId
+  if (!grantId) {
+    viewerState.error = '当前 PDF 文件权限已失效，请重新打开文件后再试。'
+    return
+  }
+  viewerState.transforming = true
+  try {
+    const result = payload.kind === 'reversePages'
+      ? await reversePdfPages(grantId)
+      : await rotatePdfPages(grantId, payload.direction, payload.pages)
+    if (result.cancelled) return
+    pageToolsVisible.value = false
+    await viewer.value?.open(result.source)
+  } catch (error) {
+    viewerState.error = error instanceof Error
+      ? error.message
+      : 'PDF 整理失败，请确认文件未损坏且未受密码保护。'
+  } finally {
+    viewerState.transforming = false
+  }
+}
 
 const sourceName = computed(() => viewerState.documentName || 'lw.PDF')
 
@@ -146,6 +181,7 @@ function onKeydown(event: KeyboardEvent) {
     viewerState.error = null
     aboutVisible.value = false
     integrationVisible.value = false
+    if (!viewerState.transforming) pageToolsVisible.value = false
     return
   }
   if (editing) return
@@ -217,6 +253,7 @@ onUnmounted(() => {
       @open="requestOpen"
       @about="aboutVisible = true"
       @integration="integrationVisible = true"
+      @page-tools="pageToolsVisible = true"
     />
     <main class="workspace">
       <PdfSidebar
@@ -244,6 +281,14 @@ onUnmounted(() => {
     <WindowsIntegrationDialog
       v-if="integrationVisible"
       @close="integrationVisible = false"
+    />
+    <PageToolsDialog
+      v-if="pageToolsVisible"
+      :page-number="viewerState.pageNumber"
+      :page-count="viewerState.pageCount"
+      :transforming="viewerState.transforming"
+      @close="pageToolsVisible = false"
+      @apply="applyPageTools"
     />
     <input
       ref="input"

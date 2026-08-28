@@ -74,6 +74,7 @@ export class PdfViewerController {
     try {
       this.source = source
       setCurrentGrant(source.kind === 'url' ? source.grantId : undefined)
+      viewerState.currentGrantId = source.kind === 'url' ? source.grantId : undefined
       const task = this.loadingTask = pdfjsLib.getDocument(createPdfLoadingSource(source))
       task.onPassword = (update: (password: string) => void) => {
         const password = window.prompt('请输入 PDF 密码')
@@ -145,6 +146,7 @@ export class PdfViewerController {
     }
     if (this.source?.kind === 'url') await revokeDesktopFile(this.source.grantId)
     this.source = null
+    viewerState.currentGrantId = undefined
     viewerState.document = null
     viewerState.documentName = ''
     viewerState.pageCount = 0

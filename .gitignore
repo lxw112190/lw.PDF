@@ -14,6 +14,8 @@ dist-ssr
 release
 build-native
 *.exe
+.deps
+.claude/
 .codex-*.log
 
 # Editor directories and files
