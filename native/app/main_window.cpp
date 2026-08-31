@@ -8,14 +8,79 @@
 #include "webview/webview_host.h"
 
 #include <Shellapi.h>
+#include <ShlObj.h>
 
 #include <filesystem>
+#include <fstream>
+#include <algorithm>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 
 namespace {
 constexpr wchar_t kClassName[] = L"lw.PDF.MainWindow";
+constexpr int kDefaultWidth = 1180;
+constexpr int kDefaultHeight = 760;
+constexpr int kMinimumWidth = 640;
+constexpr int kMinimumHeight = 480;
+
+std::filesystem::path WindowGeometryPath() {
+  PWSTR local_app_data = nullptr;
+  if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &local_app_data)) || !local_app_data) {
+    if (local_app_data) CoTaskMemFree(local_app_data);
+    return {};
+  }
+  const auto path = std::filesystem::path(local_app_data) / L"lw.PDF" / L"window.json";
+  CoTaskMemFree(local_app_data);
+  return path;
+}
+
+struct SavedWindowGeometry { RECT rect{0, 0, kDefaultWidth, kDefaultHeight}; bool maximized = false; };
+
+SavedWindowGeometry LoadWindowGeometry() {
+  SavedWindowGeometry geometry;
+  try {
+    std::ifstream input(WindowGeometryPath(), std::ios::binary);
+    const auto root = nlohmann::json::parse(input);
+    const int x = root.value("x", 0), y = root.value("y", 0);
+    const int width = root.value("width", kDefaultWidth), height = root.value("height", kDefaultHeight);
+    if (!root.is_object() || root.value("version", 0) != 1 || width < kMinimumWidth || height < kMinimumHeight || width > 10000 || height > 10000) return geometry;
+    geometry.rect = {x, y, x + width, y + height};
+    geometry.maximized = root.value("maximized", false);
+  } catch (...) {}
+  return geometry;
+}
+
+SavedWindowGeometry ValidateWindowGeometry(SavedWindowGeometry geometry) {
+  if (MonitorFromRect(&geometry.rect, MONITOR_DEFAULTTONULL)) return geometry;
+  const auto monitor = MonitorFromPoint({0, 0}, MONITOR_DEFAULTTOPRIMARY);
+  MONITORINFO info{sizeof(info)};
+  if (GetMonitorInfoW(monitor, &info)) {
+    const int width = std::min(geometry.rect.right - geometry.rect.left, info.rcWork.right - info.rcWork.left - 80);
+    const int height = std::min(geometry.rect.bottom - geometry.rect.top, info.rcWork.bottom - info.rcWork.top - 80);
+    geometry.rect.left = info.rcWork.left + 40; geometry.rect.top = info.rcWork.top + 40;
+    geometry.rect.right = geometry.rect.left + width; geometry.rect.bottom = geometry.rect.top + height;
+  }
+  return geometry;
+}
+
+void SaveWindowGeometry(HWND window) {
+  WINDOWPLACEMENT placement{sizeof(placement)};
+  if (!GetWindowPlacement(window, &placement)) return;
+  const auto path = WindowGeometryPath();
+  if (path.empty()) return;
+  try {
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    if (error) return;
+    const auto& rect = placement.rcNormalPosition;
+    const nlohmann::json root{{"version", 1}, {"x", rect.left}, {"y", rect.top}, {"width", rect.right - rect.left}, {"height", rect.bottom - rect.top}, {"maximized", IsZoomed(window) != FALSE}};
+    auto temporary = path; temporary += L".tmp";
+    std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+    output << root.dump(2); output.close();
+    if (output) MoveFileExW(temporary.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+  } catch (...) {}
+}
 struct State {
   std::unique_ptr<BridgeDispatcher> bridge;
   std::shared_ptr<PdfFileGrantManager> grants;
@@ -74,6 +139,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
       else BridgeDispatcher::DiscardTransformCompletion(lparam);
       return 0;
     case WM_SIZE: if (state) state->webview->Resize(); return 0;
+    case WM_EXITSIZEMOVE: SaveWindowGeometry(window); return 0;
     case WM_DROPFILES: {
       if (!state) return 0;
       const auto drop = reinterpret_cast<HDROP>(wparam);
@@ -97,7 +163,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
       }
       return 0;
     }
-    case WM_DESTROY: delete state; SetWindowLongPtrW(window, GWLP_USERDATA, 0); PostQuitMessage(0); return 0;
+    case WM_DESTROY: SaveWindowGeometry(window); delete state; SetWindowLongPtrW(window, GWLP_USERDATA, 0); PostQuitMessage(0); return 0;
   }
   return DefWindowProcW(window, message, wparam, lparam);
 }
@@ -118,15 +184,17 @@ int RunMainWindow(HINSTANCE instance, const std::optional<std::wstring>& launch_
                    std::to_string(GetLastError()));
     return 1;
   }
+  const auto geometry = ValidateWindowGeometry(LoadWindowGeometry());
   const auto window = CreateWindowExW(0, kClassName, L"lw.PDF", WS_OVERLAPPEDWINDOW,
-      CW_USEDEFAULT, CW_USEDEFAULT, 1180, 760, nullptr, nullptr, instance,
+      geometry.rect.left, geometry.rect.top, geometry.rect.right - geometry.rect.left,
+      geometry.rect.bottom - geometry.rect.top, nullptr, nullptr, instance,
       const_cast<std::optional<std::wstring>*>(&launch_path));
   if (!window) {
     NativeLogError("window.create.failed error=" +
                    std::to_string(GetLastError()));
     return 1;
   }
-  DragAcceptFiles(window, TRUE); ShowWindow(window, SW_SHOW); UpdateWindow(window);
+  DragAcceptFiles(window, TRUE); ShowWindow(window, geometry.maximized ? SW_SHOWMAXIMIZED : SW_SHOW); UpdateWindow(window);
   MSG message{}; while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
   return static_cast<int>(message.wParam);
 }
