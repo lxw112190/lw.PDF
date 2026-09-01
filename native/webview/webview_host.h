@@ -38,4 +38,7 @@ class WebViewHost {
   EventRegistrationToken new_window_token_{};
   EventRegistrationToken permission_token_{};
   EventRegistrationToken completed_token_{};
+  EventRegistrationToken process_failed_token_{};
+  UINT64 app_navigation_id_ = 0;
+  bool failure_message_shown_ = false;
 };

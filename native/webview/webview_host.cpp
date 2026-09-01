@@ -123,7 +123,7 @@ const wchar_t kBridgeScript[] = LR"JS((() => {
 }
 
 WebViewHost::~WebViewHost() {
-  if (webview_) { webview_->remove_WebMessageReceived(message_token_); webview_->remove_WebResourceRequested(resource_token_); webview_->remove_NavigationStarting(navigation_token_); webview_->remove_FrameNavigationStarting(frame_navigation_token_); webview_->remove_NewWindowRequested(new_window_token_); webview_->remove_PermissionRequested(permission_token_); webview_->remove_NavigationCompleted(completed_token_); }
+  if (webview_) { webview_->remove_WebMessageReceived(message_token_); webview_->remove_WebResourceRequested(resource_token_); webview_->remove_NavigationStarting(navigation_token_); webview_->remove_FrameNavigationStarting(frame_navigation_token_); webview_->remove_NewWindowRequested(new_window_token_); webview_->remove_PermissionRequested(permission_token_); webview_->remove_NavigationCompleted(completed_token_); webview_->remove_ProcessFailed(process_failed_token_); }
   if (controller_) controller_->Close();
 }
 
@@ -145,14 +145,55 @@ void WebViewHost::Create(HWND window, const std::wstring& content_folder, std::s
         Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings; if (SUCCEEDED(webview_->get_Settings(&settings))) { settings->put_AreDevToolsEnabled(FALSE); settings->put_IsStatusBarEnabled(FALSE); settings->put_AreHostObjectsAllowed(FALSE); settings->put_IsWebMessageEnabled(TRUE); }
         Microsoft::WRL::ComPtr<ICoreWebView2_3> webview3; if (SUCCEEDED(webview_.As(&webview3))) webview3->SetVirtualHostNameToFolderMapping(L"app.lwpdf", content_folder.c_str(), COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
         webview_->AddScriptToExecuteOnDocumentCreated(kBridgeScript, nullptr);
-        webview_->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([this](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT { LPWSTR uri = nullptr; if (FAILED(args->get_Uri(&uri)) || !uri) { if (uri) CoTaskMemFree(uri); args->put_Cancel(TRUE); return S_OK; } const std::wstring value(uri); CoTaskMemFree(uri); if (!IsTrustedAppUri(value)) { args->put_Cancel(TRUE); OpenPublicWebUri(window_, value); } return S_OK; }).Get(), &navigation_token_);
+        webview_->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([this](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT { LPWSTR uri = nullptr; if (FAILED(args->get_Uri(&uri)) || !uri) { if (uri) CoTaskMemFree(uri); args->put_Cancel(TRUE); return S_OK; } const std::wstring value(uri); CoTaskMemFree(uri); if (!IsTrustedAppUri(value)) { args->put_Cancel(TRUE); OpenPublicWebUri(window_, value); } else { UINT64 navigation_id = 0; if (SUCCEEDED(args->get_NavigationId(&navigation_id))) app_navigation_id_ = navigation_id; } return S_OK; }).Get(), &navigation_token_);
         webview_->add_FrameNavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT { LPWSTR uri = nullptr; const bool trusted = SUCCEEDED(args->get_Uri(&uri)) && uri && IsTrustedAppUri(uri); if (uri) CoTaskMemFree(uri); if (!trusted) args->put_Cancel(TRUE); return S_OK; }).Get(), &frame_navigation_token_);
         webview_->add_NewWindowRequested(Callback<ICoreWebView2NewWindowRequestedEventHandler>([this](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT { args->put_Handled(TRUE); LPWSTR uri = nullptr; if (SUCCEEDED(args->get_Uri(&uri)) && uri) OpenPublicWebUri(window_, uri); if (uri) CoTaskMemFree(uri); return S_OK; }).Get(), &new_window_token_);
         webview_->add_PermissionRequested(Callback<ICoreWebView2PermissionRequestedEventHandler>([](ICoreWebView2*, ICoreWebView2PermissionRequestedEventArgs* args) -> HRESULT { args->put_State(COREWEBVIEW2_PERMISSION_STATE_DENY); return S_OK; }).Get(), &permission_token_);
         webview_->AddWebResourceRequestedFilter(L"https://file.lwpdf/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
         webview_->add_WebResourceRequested(Callback<ICoreWebView2WebResourceRequestedEventHandler>([this](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT { ReplyFile(environment_.Get(), args, grants_); return S_OK; }).Get(), &resource_token_);
         webview_->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>([this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT { LPWSTR source = nullptr; const bool trusted = SUCCEEDED(args->get_Source(&source)) && source && IsTrustedAppUri(source); if (source) CoTaskMemFree(source); if (!trusted) return S_OK; LPWSTR json = nullptr; if (SUCCEEDED(args->get_WebMessageAsJson(&json)) && json) { const auto request = WideToUtf8(json); CoTaskMemFree(json); if (on_message_) { const auto target = webview_; on_message_(request, [target](const std::string& reply) { if (!reply.empty()) PostJsonToTrustedWebView(target.Get(), reply); }); } } return S_OK; }).Get(), &message_token_);
-        webview_->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs*) -> HRESULT { NativeLogInfo("webview.ready"); if (on_ready_) on_ready_(); return S_OK; }).Get(), &completed_token_);
+        webview_->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
+          UINT64 navigation_id = 0;
+          if (!args || FAILED(args->get_NavigationId(&navigation_id)) ||
+              navigation_id != app_navigation_id_) return S_OK;
+          BOOL success = FALSE;
+          COREWEBVIEW2_WEB_ERROR_STATUS web_error = COREWEBVIEW2_WEB_ERROR_STATUS_UNKNOWN;
+          const auto success_result = args->get_IsSuccess(&success);
+          const auto status_result = args->get_WebErrorStatus(&web_error);
+          if (SUCCEEDED(success_result) && success) {
+            failure_message_shown_ = false;
+            NativeLogInfo("webview.ready");
+            if (on_ready_) on_ready_();
+          } else {
+            NativeLogError("webview.navigation_failed status=" +
+                           std::to_string(static_cast<int>(web_error)) +
+                           " success_hresult=" +
+                           std::to_string(static_cast<long>(success_result)) +
+                           " status_hresult=" +
+                           std::to_string(static_cast<long>(status_result)));
+            if (!failure_message_shown_) {
+              failure_message_shown_ = true;
+              MessageBoxW(window_,
+                          L"lw.PDF 界面加载失败。\n\n请重新启动应用；如果问题持续，请查看日志。",
+                          L"lw.PDF", MB_OK | MB_ICONERROR);
+            }
+          }
+          return S_OK;
+        }).Get(), &completed_token_);
+        webview_->add_ProcessFailed(Callback<ICoreWebView2ProcessFailedEventHandler>([this](ICoreWebView2*, ICoreWebView2ProcessFailedEventArgs* args) -> HRESULT {
+          COREWEBVIEW2_PROCESS_FAILED_KIND kind = COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED;
+          const auto result = args ? args->get_ProcessFailedKind(&kind) : E_POINTER;
+          NativeLogError("webview.process_failed kind=" +
+                         std::to_string(static_cast<int>(kind)) +
+                         " hresult=" + std::to_string(static_cast<long>(result)));
+          if (!failure_message_shown_) {
+            failure_message_shown_ = true;
+            MessageBoxW(window_,
+                        L"WebView2 进程异常，lw.PDF 可能无法继续正常工作。\n\n请重新启动应用；如果问题持续，请查看日志。",
+                        L"lw.PDF", MB_OK | MB_ICONERROR);
+          }
+          return S_OK;
+        }).Get(), &process_failed_token_);
         Resize();
         const auto navigation = webview_->Navigate(L"https://app.lwpdf/index.html");
         if (FAILED(navigation)) NativeLogError("webview.navigate.failed hresult=" + std::to_string(static_cast<long>(navigation)));
