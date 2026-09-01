@@ -7,6 +7,10 @@ defineProps<{ name: string; viewer: any }>(); const emit = defineEmits<{ open: [
 function go(viewer: any) { viewer?.setPage(Number(page.value)); page.value = '' }
 function toggleEyeCare() { toggleEyeCareMode(); menuOpen.value = false }
 function openPageTools() { menuOpen.value = false; emit('pageTools') }
+function toggleAnnotation(viewer: any) {
+  viewerState.annotationToolbarVisible = !viewerState.annotationToolbarVisible
+  if (!viewerState.annotationToolbarVisible && viewerState.annotationMode !== 0) viewer?.setAnnotationMode(0)
+}
 </script>
 <template>
   <header class="toolbar">
@@ -24,6 +28,12 @@ function openPageTools() { menuOpen.value = false; emit('pageTools') }
     <span class="toolbar-spacer"/>
     <button :disabled="!viewerState.pageCount" @click="viewerState.sidebarVisible = !viewerState.sidebarVisible">侧栏</button>
     <button :disabled="!viewerState.pageCount" @click="viewerState.searchVisible = true">搜索</button>
+    <button
+      :class="{ active: viewerState.annotationToolbarVisible, dirty: viewerState.annotationDirty }"
+      :disabled="!viewerState.pageCount"
+      :title="viewerState.annotationDirty ? '批注有未保存修改' : '显示批注工具'"
+      @click="toggleAnnotation(viewer)"
+    >批注<span v-if="viewerState.annotationDirty" aria-label="未保存">*</span></button>
     <div class="app-menu">
       <button aria-label="更多" :aria-expanded="menuOpen" @click="menuOpen = !menuOpen">⋯</button>
       <div v-if="menuOpen" class="app-menu-popover" role="menu">
@@ -40,8 +50,8 @@ function openPageTools() { menuOpen.value = false; emit('pageTools') }
         <span class="menu-separator" role="separator"/>
         <button
           role="menuitem"
-          :disabled="!viewerState.pageCount || !isDesktop || viewerState.transforming"
-          :title="!isDesktop ? '页面整理功能当前仅桌面版支持' : undefined"
+          :disabled="!viewerState.pageCount || !isDesktop || viewerState.transforming || viewerState.annotationDirty"
+          :title="viewerState.annotationDirty ? '请先保存批注' : (!isDesktop ? '页面整理功能当前仅桌面版支持' : undefined)"
           @click="openPageTools"
         >页面整理…</button>
         <button role="menuitem" @click="menuOpen = false; emit('integration')">Windows 集成…</button>

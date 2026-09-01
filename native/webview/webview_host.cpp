@@ -11,13 +11,20 @@
 #include <Shellapi.h>
 
 #include <filesystem>
+#include <fstream>
+#include <array>
+#include <objbase.h>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <vector>
+#include <nlohmann/json.hpp>
 
 using Microsoft::WRL::Callback;
 namespace {
 constexpr std::wstring_view kAppOrigin = L"https://app.lwpdf/";
 constexpr std::wstring_view kFileOrigin = L"https://file.lwpdf/";
+constexpr std::wstring_view kSaveOrigin = L"https://save.lwpdf/";
 
 bool StartsWithIgnoreCase(std::wstring_view value, std::wstring_view prefix) {
   return value.size() >= prefix.size() && CompareStringOrdinal(value.data(),
@@ -25,9 +32,10 @@ bool StartsWithIgnoreCase(std::wstring_view value, std::wstring_view prefix) {
 }
 bool IsTrustedAppUri(std::wstring_view uri) { return StartsWithIgnoreCase(uri, kAppOrigin); }
 bool IsFileUri(std::wstring_view uri) { return StartsWithIgnoreCase(uri, kFileOrigin); }
+bool IsSaveUri(std::wstring_view uri) { return StartsWithIgnoreCase(uri, kSaveOrigin); }
 bool IsPublicWebUri(std::wstring_view uri) {
   return (StartsWithIgnoreCase(uri, L"https://") || StartsWithIgnoreCase(uri, L"http://")) &&
-      !IsTrustedAppUri(uri) && !IsFileUri(uri);
+      !IsTrustedAppUri(uri) && !IsFileUri(uri) && !IsSaveUri(uri);
 }
 void OpenPublicWebUri(HWND owner, std::wstring_view uri) {
   if (!IsPublicWebUri(uri)) return;
@@ -63,6 +71,153 @@ std::optional<std::string> GrantIdFromUri(std::wstring_view uri) {
     id.push_back(static_cast<char>(character));
   }
   return id;
+}
+std::optional<std::string> SaveIdFromUri(std::wstring_view uri) {
+  if (!IsSaveUri(uri)) return std::nullopt;
+  const auto rest = uri.substr(kSaveOrigin.size());
+  const auto slash = rest.find(L'/');
+  if (slash != 32U || rest.substr(slash) != L"/document.pdf") return std::nullopt;
+  std::string id;
+  id.reserve(32U);
+  for (const auto character : rest.substr(0, slash)) {
+    if (!((character >= L'0' && character <= L'9') || (character >= L'a' && character <= L'f'))) return std::nullopt;
+    id.push_back(static_cast<char>(character));
+  }
+  return id;
+}
+std::wstring RequestMethod(ICoreWebView2WebResourceRequest* request) {
+  LPWSTR value = nullptr;
+  if (!request || FAILED(request->get_Method(&value)) || !value) return L"";
+  std::wstring method(value); CoTaskMemFree(value); return method;
+}
+std::wstring RequestHeader(ICoreWebView2WebResourceRequest* request, const wchar_t* name) {
+  Microsoft::WRL::ComPtr<ICoreWebView2HttpRequestHeaders> headers;
+  LPWSTR value = nullptr;
+  if (!request || FAILED(request->get_Headers(&headers)) || !headers ||
+      FAILED(headers->GetHeader(name, &value)) || !value) return L"";
+  std::wstring result(value); CoTaskMemFree(value); return result;
+}
+Microsoft::WRL::ComPtr<IStream> JsonStream(const std::string& body) {
+  Microsoft::WRL::ComPtr<IStream> stream;
+  auto* raw = SHCreateMemStream(reinterpret_cast<const BYTE*>(body.data()),
+                                static_cast<UINT>(body.size()));
+  if (raw) stream.Attach(raw);
+  return stream;
+}
+
+struct SaveCompletion {
+  HWND owner = nullptr;
+  Microsoft::WRL::ComPtr<ICoreWebView2WebResourceRequestedEventArgs> args;
+  Microsoft::WRL::ComPtr<ICoreWebView2Deferral> deferral;
+  std::shared_ptr<PdfFileGrantManager> grants;
+  std::filesystem::path output;
+  std::filesystem::path temporary;
+  std::string token;
+  std::string error;
+  bool success = false;
+};
+
+void ReplySave(HWND owner, ICoreWebView2Environment* environment,
+               ICoreWebView2WebResourceRequestedEventArgs* args,
+               const std::shared_ptr<PdfFileGrantManager>& grants) {
+  Microsoft::WRL::ComPtr<ICoreWebView2WebResourceRequest> request;
+  LPWSTR raw_uri = nullptr;
+  if (!environment || !args || !grants || FAILED(args->get_Request(&request)) || !request ||
+      FAILED(request->get_Uri(&raw_uri)) || !raw_uri) {
+    if (raw_uri) CoTaskMemFree(raw_uri);
+    return;
+  }
+  const auto id = SaveIdFromUri(raw_uri);
+  CoTaskMemFree(raw_uri);
+  if (!id) return;
+  const auto method = RequestMethod(request.Get());
+  const auto origin = RequestHeader(request.Get(), L"Origin");
+  if (origin != L"https://app.lwpdf") {
+    Microsoft::WRL::ComPtr<ICoreWebView2WebResourceResponse> response;
+    environment->CreateWebResourceResponse(JsonStream(R"({"error":"origin_not_allowed"})").Get(),
+        403, L"Forbidden", L"Content-Type: application/json\r\nAccess-Control-Allow-Origin: https://app.lwpdf",
+        &response);
+    args->put_Response(response.Get());
+    return;
+  }
+  const std::wstring cors = L"Access-Control-Allow-Origin: https://app.lwpdf\r\n"
+                            L"Access-Control-Allow-Methods: PUT, OPTIONS\r\n"
+                            L"Access-Control-Allow-Headers: Content-Type\r\n"
+                            L"Vary: Origin";
+  if (method == L"OPTIONS") {
+    Microsoft::WRL::ComPtr<ICoreWebView2WebResourceResponse> response;
+    environment->CreateWebResourceResponse(nullptr, 204, L"No Content", cors.c_str(), &response);
+    args->put_Response(response.Get());
+    return;
+  }
+  if (method != L"PUT" || RequestHeader(request.Get(), L"Content-Type") != L"application/pdf") {
+    Microsoft::WRL::ComPtr<ICoreWebView2WebResourceResponse> response;
+    environment->CreateWebResourceResponse(JsonStream(R"({"error":"request_not_allowed"})").Get(),
+        405, L"Method Not Allowed", (L"Content-Type: application/json\r\n" + cors).c_str(), &response);
+    args->put_Response(response.Get());
+    return;
+  }
+  Microsoft::WRL::ComPtr<IStream> content;
+  if (FAILED(request->get_Content(&content)) || !content) {
+    Microsoft::WRL::ComPtr<ICoreWebView2WebResourceResponse> response;
+    environment->CreateWebResourceResponse(JsonStream(R"({"error":"request_body_missing"})").Get(),
+        400, L"Bad Request", (L"Content-Type: application/json\r\n" + cors).c_str(), &response);
+    args->put_Response(response.Get());
+    return;
+  }
+  Microsoft::WRL::ComPtr<IStream> marshaled;
+  if (FAILED(CoMarshalInterThreadInterfaceInStream(IID_IStream, content.Get(), &marshaled))) {
+    Microsoft::WRL::ComPtr<ICoreWebView2WebResourceResponse> response;
+    environment->CreateWebResourceResponse(JsonStream(R"({"error":"request_body_unavailable"})").Get(),
+        500, L"Internal Server Error", (L"Content-Type: application/json\r\n" + cors).c_str(), &response);
+    args->put_Response(response.Get());
+    return;
+  }
+  const auto grant = grants->TakeSave(*id);
+  if (!grant) {
+    Microsoft::WRL::ComPtr<ICoreWebView2WebResourceResponse> response;
+    environment->CreateWebResourceResponse(JsonStream(R"({"error":"save_grant_invalid"})").Get(),
+        404, L"Not Found", (L"Content-Type: application/json\r\n" + cors).c_str(), &response);
+    args->put_Response(response.Get());
+    return;
+  }
+  Microsoft::WRL::ComPtr<ICoreWebView2Deferral> deferral;
+  if (FAILED(args->GetDeferral(&deferral)) || !deferral) return;
+  auto completion = std::make_unique<SaveCompletion>();
+  completion->owner = owner;
+  completion->args = args; completion->deferral = deferral;
+  completion->grants = grants; completion->output = grant->path;
+  completion->temporary = grant->path; completion->temporary += L".lwpdf-" + std::wstring(grant->id.begin(), grant->id.end()) + L".tmp";
+  completion->token = grant->id;
+  auto* payload = completion.release();
+  std::thread([payload, marshaled = marshaled.Detach()]() mutable {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    Microsoft::WRL::ComPtr<IStream> stream;
+    const auto stream_result = CoGetInterfaceAndReleaseStream(marshaled, IID_PPV_ARGS(&stream));
+    if (FAILED(stream_result) || !stream) payload->error = "request_body_unavailable";
+    std::ofstream output(payload->temporary, std::ios::binary | std::ios::trunc);
+    std::array<char, 64 * 1024> buffer{};
+    std::uintmax_t total = 0;
+    bool pdf_header = false;
+    while (payload->error.empty() && output && stream) {
+      ULONG read = 0;
+      if (FAILED(stream->Read(buffer.data(), static_cast<ULONG>(buffer.size()), &read))) { payload->error = "request_read_failed"; break; }
+      if (!read) break;
+      if (total == 0 && read >= 5 && std::string_view(buffer.data(), 5) == "%PDF-") pdf_header = true;
+      total += read;
+      if (total > 2ULL * 1024ULL * 1024ULL * 1024ULL) { payload->error = "pdf_too_large"; break; }
+      output.write(buffer.data(), read);
+    }
+    output.flush(); output.close();
+    if (payload->error.empty() && (!pdf_header || total == 0)) payload->error = "invalid_pdf_body";
+    if (payload->error.empty() && !MoveFileExW(payload->temporary.c_str(), payload->output.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) payload->error = "output_commit_failed";
+    if (!payload->error.empty()) { std::error_code ec; std::filesystem::remove(payload->temporary, ec); }
+    payload->success = payload->error.empty();
+    CoUninitialize();
+    if (!PostMessageW(payload->owner, WebViewHost::kSaveCompleteMessage, 0, reinterpret_cast<LPARAM>(payload))) {
+      WebViewHost::DiscardSave(reinterpret_cast<LPARAM>(payload));
+    }
+  }).detach();
 }
 std::wstring GetRangeHeader(ICoreWebView2WebResourceRequest* request) {
   Microsoft::WRL::ComPtr<ICoreWebView2HttpRequestHeaders> headers;
@@ -123,8 +278,49 @@ const wchar_t kBridgeScript[] = LR"JS((() => {
 }
 
 WebViewHost::~WebViewHost() {
-  if (webview_) { webview_->remove_WebMessageReceived(message_token_); webview_->remove_WebResourceRequested(resource_token_); webview_->remove_NavigationStarting(navigation_token_); webview_->remove_FrameNavigationStarting(frame_navigation_token_); webview_->remove_NewWindowRequested(new_window_token_); webview_->remove_PermissionRequested(permission_token_); webview_->remove_NavigationCompleted(completed_token_); webview_->remove_ProcessFailed(process_failed_token_); }
+  if (webview_) { webview_->remove_WebMessageReceived(message_token_); webview_->remove_WebResourceRequested(resource_token_); webview_->remove_NavigationStarting(navigation_token_); webview_->remove_FrameNavigationStarting(frame_navigation_token_); webview_->remove_NewWindowRequested(new_window_token_); webview_->remove_PermissionRequested(permission_token_); webview_->remove_NavigationCompleted(completed_token_); webview_->remove_ProcessFailed(process_failed_token_); webview_->remove_DocumentTitleChanged(title_token_); }
   if (controller_) controller_->Close();
+}
+
+void WebViewHost::DiscardSave(LPARAM payload) {
+  auto* completion = reinterpret_cast<SaveCompletion*>(payload);
+  if (!completion) return;
+  std::error_code error;
+  if (!completion->temporary.empty()) std::filesystem::remove(completion->temporary, error);
+  delete completion;
+}
+
+void WebViewHost::CompleteSave(LPARAM payload) {
+  std::unique_ptr<SaveCompletion> completion(reinterpret_cast<SaveCompletion*>(payload));
+  if (!completion) return;
+  Microsoft::WRL::ComPtr<ICoreWebView2WebResourceResponse> response;
+  const std::wstring headers = L"Content-Type: application/json\r\n"
+                               L"Access-Control-Allow-Origin: https://app.lwpdf\r\n"
+                               L"Access-Control-Allow-Methods: PUT, OPTIONS\r\n"
+                               L"Access-Control-Allow-Headers: Content-Type\r\n"
+                               L"Vary: Origin";
+  if (completion->success) {
+    try {
+      const auto grant = completion->grants->Create(completion->output);
+      const nlohmann::json body = {{"file", {{"id", grant.id}, {"name", grant.name},
+          {"size", grant.size}, {"mime", "application/pdf"}, {"url", grant.url}}}};
+      const auto stream = JsonStream(body.dump());
+      environment_->CreateWebResourceResponse(stream.Get(), 201, L"Created", headers.c_str(), &response);
+      NativeLogInfo("pdf.annotation.saved id=" + grant.id +
+                    " size=" + std::to_string(grant.size));
+    } catch (const std::exception& error) {
+      completion->success = false;
+      completion->error = error.what();
+    }
+  }
+  if (!completion->success) {
+    const nlohmann::json body = {{"error", completion->error.empty() ? "output_commit_failed" : completion->error}};
+    const auto stream = JsonStream(body.dump());
+    environment_->CreateWebResourceResponse(stream.Get(), 500, L"Internal Server Error", headers.c_str(), &response);
+    NativeLogError("pdf.annotation.save_failed reason=" + completion->error);
+  }
+  if (response) completion->args->put_Response(response.Get());
+  if (completion->deferral) completion->deferral->Complete();
 }
 
 void WebViewHost::Create(HWND window, const std::wstring& content_folder, std::shared_ptr<PdfFileGrantManager> grants, MessageHandler on_message, ReadyHandler on_ready) {
@@ -150,7 +346,17 @@ void WebViewHost::Create(HWND window, const std::wstring& content_folder, std::s
         webview_->add_NewWindowRequested(Callback<ICoreWebView2NewWindowRequestedEventHandler>([this](ICoreWebView2*, ICoreWebView2NewWindowRequestedEventArgs* args) -> HRESULT { args->put_Handled(TRUE); LPWSTR uri = nullptr; if (SUCCEEDED(args->get_Uri(&uri)) && uri) OpenPublicWebUri(window_, uri); if (uri) CoTaskMemFree(uri); return S_OK; }).Get(), &new_window_token_);
         webview_->add_PermissionRequested(Callback<ICoreWebView2PermissionRequestedEventHandler>([](ICoreWebView2*, ICoreWebView2PermissionRequestedEventArgs* args) -> HRESULT { args->put_State(COREWEBVIEW2_PERMISSION_STATE_DENY); return S_OK; }).Get(), &permission_token_);
         webview_->AddWebResourceRequestedFilter(L"https://file.lwpdf/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
-        webview_->add_WebResourceRequested(Callback<ICoreWebView2WebResourceRequestedEventHandler>([this](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT { ReplyFile(environment_.Get(), args, grants_); return S_OK; }).Get(), &resource_token_);
+        webview_->AddWebResourceRequestedFilter(L"https://save.lwpdf/*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+        webview_->add_WebResourceRequested(Callback<ICoreWebView2WebResourceRequestedEventHandler>([this](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
+          LPWSTR uri = nullptr;
+          Microsoft::WRL::ComPtr<ICoreWebView2WebResourceRequest> request;
+          if (args && SUCCEEDED(args->get_Request(&request)) && request && SUCCEEDED(request->get_Uri(&uri)) && uri) {
+            const std::wstring value(uri); CoTaskMemFree(uri);
+            if (IsSaveUri(value)) ReplySave(window_, environment_.Get(), args, grants_);
+            else if (IsFileUri(value)) ReplyFile(environment_.Get(), args, grants_);
+          } else if (uri) CoTaskMemFree(uri);
+          return S_OK;
+        }).Get(), &resource_token_);
         webview_->add_WebMessageReceived(Callback<ICoreWebView2WebMessageReceivedEventHandler>([this](ICoreWebView2*, ICoreWebView2WebMessageReceivedEventArgs* args) -> HRESULT { LPWSTR source = nullptr; const bool trusted = SUCCEEDED(args->get_Source(&source)) && source && IsTrustedAppUri(source); if (source) CoTaskMemFree(source); if (!trusted) return S_OK; LPWSTR json = nullptr; if (SUCCEEDED(args->get_WebMessageAsJson(&json)) && json) { const auto request = WideToUtf8(json); CoTaskMemFree(json); if (on_message_) { const auto target = webview_; on_message_(request, [target](const std::string& reply) { if (!reply.empty()) PostJsonToTrustedWebView(target.Get(), reply); }); } } return S_OK; }).Get(), &message_token_);
         webview_->add_NavigationCompleted(Callback<ICoreWebView2NavigationCompletedEventHandler>([this](ICoreWebView2*, ICoreWebView2NavigationCompletedEventArgs* args) -> HRESULT {
           UINT64 navigation_id = 0;
@@ -194,6 +400,14 @@ void WebViewHost::Create(HWND window, const std::wstring& content_folder, std::s
           }
           return S_OK;
         }).Get(), &process_failed_token_);
+        webview_->add_DocumentTitleChanged(Callback<ICoreWebView2DocumentTitleChangedEventHandler>([this](ICoreWebView2*, IUnknown*) -> HRESULT {
+          LPWSTR title = nullptr;
+          if (webview_ && SUCCEEDED(webview_->get_DocumentTitle(&title)) && title) {
+            SetWindowTextW(window_, *title ? title : L"lw.PDF");
+            CoTaskMemFree(title);
+          }
+          return S_OK;
+        }).Get(), &title_token_);
         Resize();
         const auto navigation = webview_->Navigate(L"https://app.lwpdf/index.html");
         if (FAILED(navigation)) NativeLogError("webview.navigate.failed hresult=" + std::to_string(static_cast<long>(navigation)));

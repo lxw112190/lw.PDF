@@ -6,6 +6,7 @@ import './styles/viewer.css'
 import './styles/dragdrop.css'
 import './styles/eye-care.css'
 import './styles/recent-files.css'
+import './styles/annotation.css'
 import App from './App.vue'
 import { initializeEyeCareMode } from './services/eyeCare'
 initializeEyeCareMode()

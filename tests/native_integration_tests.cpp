@@ -65,6 +65,14 @@ int main() {
   bool rejected = false;
   try { grants.Create(text); } catch (...) { rejected = true; }
   Check(rejected, "does not grant non-PDF files");
+  const auto save_path = root / "annotated.pdf";
+  const auto save_grant = grants.CreateSave(save_path);
+  Check(save_grant.url.rfind("https://save.lwpdf/", 0) == 0 &&
+            save_grant.id.size() == 32U,
+        "creates a time-limited opaque annotation save URL");
+  Check(grants.TakeSave(save_grant.id).has_value() &&
+            !grants.TakeSave(save_grant.id).has_value(),
+        "consumes an annotation save URL exactly once");
 
   CheckRange(L"", 100, 0, 99, false, "serves a full response without Range");
   CheckRange(L"bytes=0-99", 100, 0, 99, true,

@@ -171,6 +171,16 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
       reply(Success(id, {{"files", std::move(files)}}).dump());
       return;
     }
+    if (method == "app.documentDirty") {
+      if (!params.contains("dirty") || !params.at("dirty").is_boolean()) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid document state").dump());
+        return;
+      }
+      dirty_ = params.at("dirty").get<bool>();
+      NativeLogDebug(std::string("document.dirty=") + (dirty_ ? "true" : "false"));
+      reply(Success(id, nullptr).dump());
+      return;
+    }
     if (method == "recent.confirmOpen") {
       if (!params.contains("grantId") || !params.at("grantId").is_string()) {
         reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid file permission").dump());
@@ -216,6 +226,11 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
       return;
     }
     if (method == "pdf.transformSaveAs") {
+      if (dirty_) {
+        reply(Error(id, "PDF_UNSAVED_ANNOTATIONS",
+                    "Save annotations before transforming this PDF").dump());
+        return;
+      }
       if (transform_busy_) {
         reply(Error(id, "PDF_TRANSFORM_FAILED", "PDF transform already in progress").dump());
         return;
@@ -307,6 +322,47 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
           BridgeDispatcher::DiscardTransformCompletion(reinterpret_cast<LPARAM>(payload));
         }
       }).detach();
+      return;
+    }
+    if (method == "pdf.annotationSaveGrant") {
+      if (!params.contains("sourceGrantId") || !params.at("sourceGrantId").is_string()) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid PDF source").dump());
+        return;
+      }
+      const auto source_id = params.at("sourceGrantId").get<std::string>();
+      const auto source = grants_->Find(source_id);
+      if (!source) {
+        reply(Error(id, "PDF_SOURCE_UNAVAILABLE", "PDF source is no longer available").dump());
+        return;
+      }
+      const auto suggested = source->path.stem().wstring() + L"_批注.pdf";
+      const auto output_path = ChoosePdfSavePath(owner_, suggested);
+      if (!output_path) {
+        NativeLogInfo("pdf.annotation.save_cancelled");
+        reply(Success(id, {{"cancelled", true}}).dump());
+        return;
+      }
+      std::error_code path_error;
+      const auto normalized_output = std::filesystem::absolute(*output_path, path_error).lexically_normal();
+      const auto normalized_source = std::filesystem::absolute(source->path, path_error).lexically_normal();
+      if (!path_error && _wcsicmp(normalized_output.c_str(), normalized_source.c_str()) == 0) {
+        NativeLogError("pdf.annotation.save_rejected same_file");
+        reply(Error(id, "PDF_SAME_FILE", "无法覆盖原文件，请选择其他保存位置。").dump());
+        return;
+      }
+      const auto grant = grants_->CreateSave(*output_path);
+      NativeLogInfo("pdf.annotation.save_grant.created id=" + grant.id);
+      reply(Success(id, {{"cancelled", false}, {"token", grant.id},
+                         {"url", grant.url}}).dump());
+      return;
+    }
+    if (method == "pdf.annotationRevokeSaveGrant") {
+      if (!params.contains("token") || !params.at("token").is_string()) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid save permission").dump());
+        return;
+      }
+      grants_->RevokeSave(params.at("token").get<std::string>());
+      reply(Success(id, nullptr).dump());
       return;
     }
     if (method == "association.status") {

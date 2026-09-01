@@ -4,7 +4,7 @@ import type { PDFDocumentLoadingTask } from 'pdfjs-dist'
 import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { viewerState } from '../stores/viewerState'
-import { revokeDesktopFile, setCurrentGrant } from './native'
+import { nativeFileToPdfSource, revokeDesktopFile, setCurrentGrant, type NativeFile } from './native'
 import { createPdfLoadingSource } from './pdfLoadingSource'
 import { ReadingPositionStore, normalizeReadingPosition, type ReadingPosition } from './readingPosition'
 import { confirmRecentFile } from './recentFiles'
@@ -38,6 +38,9 @@ export class PdfViewerController {
   private pendingSave: { fingerprint: string; position: ReadingPosition } | null = null
   private saveTimer: number | null = null
   private suppressPositionSave = true
+  private annotationUiManager: any = null
+  private annotationSaving = false
+  private latestPosition: ReadingPosition | null = null
 
   init(container: HTMLDivElement, element: HTMLDivElement) {
     const eventBus = this.eventBus = new EventBus()
@@ -50,6 +53,8 @@ export class PdfViewerController {
       linkService: this.linkService,
       findController: this.findController,
       textLayerMode: 1,
+      annotationEditorMode: pdfjsLib.AnnotationEditorType.NONE,
+      annotationEditorHighlightColors: '#fff176, #ffb74d, #81d4fa, #ce93d8',
     })
     this.linkService.setViewer(this.viewer)
     eventBus.on('pagesinit', () => this.restoreReadingPosition())
@@ -64,9 +69,26 @@ export class PdfViewerController {
       viewerState.searchCurrent = event.matchesCount.current
       viewerState.searchTotal = event.matchesCount.total
     })
+    eventBus.on('annotationeditoruimanager', (event: { uiManager?: any }) => {
+      this.annotationUiManager = event.uiManager ?? null
+    })
+    eventBus.on('annotationeditormodechanged', (event: { mode?: number | { mode?: number } }) => {
+      const mode = typeof event.mode === 'number' ? event.mode : event.mode?.mode
+      if (typeof mode === 'number') viewerState.annotationMode = mode
+    })
+    eventBus.on('annotationeditorstateschanged', (event: { details?: Record<string, unknown> }) => {
+      const details = event.details ?? {}
+      viewerState.annotationCanUndo = details.hasSomethingToUndo === true
+      viewerState.annotationCanRedo = details.hasSomethingToRedo === true
+      viewerState.annotationHasSelection = details.hasSelectedEditor === true
+    })
   }
 
-  async open(source: PdfSource) {
+  async open(source: PdfSource, positionOverride: ReadingPosition | null = null, bypassDirtyGuard = false) {
+    if (!bypassDirtyGuard && !(await this.confirmBeforeReplace())) {
+      if (source.kind === 'url' && source.grantId) await revokeDesktopFile(source.grantId)
+      return false
+    }
     await this.close()
     const id = ++this.generation
     viewerState.loading = true
@@ -90,7 +112,7 @@ export class PdfViewerController {
       this.fingerprint = pdf.fingerprints.find(value => !!value) ?? null
       this.pendingRestore = {
         generation: id,
-        position: this.fingerprint ? this.positions.get(this.fingerprint) : null,
+        position: positionOverride ?? (this.fingerprint ? this.positions.get(this.fingerprint) : null),
       }
       this.suppressPositionSave = true
       this.viewer.setDocument(pdf)
@@ -100,6 +122,21 @@ export class PdfViewerController {
       viewerState.documentName = source.name
       viewerState.pageCount = pdf.numPages
       viewerState.pageNumber = 1
+      let permissions: number[] | null = null
+      try {
+        permissions = await pdf.getPermissions()
+      } catch {
+        permissions = null
+      }
+      viewerState.annotationEditable = !pdf.isPureXfa &&
+        (!permissions || permissions.includes(pdfjsLib.PermissionFlag.MODIFY_CONTENTS))
+      this.annotationUiManager = null
+      const storage = pdf.annotationStorage
+      storage.onSetModified = () => this.setAnnotationDirty(true)
+      storage.onResetModified = () => {
+        if (!this.annotationSaving) this.setAnnotationDirty(false)
+      }
+      this.setAnnotationDirty(false)
 
       await confirmRecentFile(source.kind === 'url' ? source.grantId : undefined)
       void window.lw?.invoke('diagnostics.info', {
@@ -123,15 +160,31 @@ export class PdfViewerController {
           ? '需要正确的 PDF 密码。'
           : `无法读取该 PDF，文件可能已损坏或授权已失效。${reason}`
       }
+      if (id === this.generation && source.kind === 'url' && source.grantId) {
+        await revokeDesktopFile(source.grantId)
+      }
     } finally {
       if (id === this.generation) viewerState.loading = false
     }
+    return id === this.generation
   }
 
   async close() {
     this.flushReadingPosition()
     this.generation++
     this.pendingRestore = null
+    this.latestPosition = null
+    this.annotationUiManager = null
+    this.annotationSaving = false
+    viewerState.annotationDirty = false
+    viewerState.annotationSaving = false
+    viewerState.annotationToolbarVisible = false
+    viewerState.annotationMode = pdfjsLib.AnnotationEditorType.NONE
+    viewerState.annotationEditable = true
+    viewerState.annotationCanUndo = false
+    viewerState.annotationCanRedo = false
+    viewerState.annotationHasSelection = false
+    void window.lw?.invoke('app.documentDirty', { dirty: false }).catch(() => {})
     this.fingerprint = null
     this.suppressPositionSave = true
     ;(this.viewer as any)?.setDocument(null)
@@ -180,6 +233,80 @@ export class PdfViewerController {
   setScale(scale: number | string) {
     if (this.viewer) this.viewer.currentScaleValue = String(scale)
   }
+  setAnnotationMode(mode: number) {
+    if (!this.viewer || !viewerState.pageCount || !viewerState.annotationEditable) return
+    try {
+      this.viewer.annotationEditorMode = { mode }
+      viewerState.annotationMode = mode
+    } catch (error) {
+      console.error('Annotation mode change failed', error)
+    }
+  }
+  undoAnnotation() { if (this.annotationUiManager?.undo) this.annotationUiManager.undo(); else this.eventBus.dispatch('editingaction', { source: this, name: 'undo' }); }
+  redoAnnotation() { if (this.annotationUiManager?.redo) this.annotationUiManager.redo(); else this.eventBus.dispatch('editingaction', { source: this, name: 'redo' }); }
+  deleteAnnotation() { if (this.annotationUiManager?.delete) this.annotationUiManager.delete(); else this.eventBus.dispatch('editingaction', { source: this, name: 'delete' }); }
+  async confirmBeforeReplace() {
+    if (!viewerState.annotationDirty && !viewerState.annotationSaving) return true
+    return window.confirm('当前 PDF 有未保存的批注，确定要打开其他文件吗？\n\n未保存的批注将丢失。')
+  }
+  async saveAnnotations() {
+    const pdf = viewerState.document
+    const source = this.source
+    if (!pdf || !source || !viewerState.annotationEditable || !viewerState.annotationDirty || this.annotationSaving) return false
+    this.annotationSaving = true
+    viewerState.annotationSaving = true
+    this.setAnnotationDirty(true)
+    const position = this.latestPosition
+    let token: string | undefined
+    try {
+      let bytes: Uint8Array
+      if (source.kind === 'url' && source.grantId && window.lw) {
+        const grant = await window.lw.invoke<{ cancelled: boolean; token?: string; url?: string }>('pdf.annotationSaveGrant', { sourceGrantId: source.grantId })
+        if (grant.cancelled) return false
+        if (!grant.token || !grant.url) throw new Error('无法创建保存权限。')
+        token = grant.token
+        bytes = await pdf.saveDocument()
+        const uploadBytes = new Uint8Array(bytes.byteLength)
+        uploadBytes.set(bytes)
+        const response = await fetch(grant.url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/pdf' },
+          body: uploadBytes,
+        })
+        if (!response.ok) {
+          const detail = await response.json().catch(() => null) as { error?: string } | null
+          throw new Error(detail?.error === 'output_commit_failed'
+            ? '无法写入目标文件，请检查磁盘空间或文件权限。'
+            : 'Native 保存失败。')
+        }
+        const result = await response.json() as { file?: NativeFile }
+        if (!result.file?.id || !result.file.url || !result.file.name) throw new Error('Native 未返回保存后的 PDF。')
+        await this.open(nativeFileToPdfSource(result.file), position, true)
+        return true
+      }
+      bytes = await pdf.saveDocument()
+      const browserBytes = new Uint8Array(bytes.byteLength)
+      browserBytes.set(bytes)
+      const blob = new Blob([browserBytes.buffer], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = source.name.replace(/\.pdf$/i, '') + '_批注.pdf'
+      anchor.click()
+      URL.revokeObjectURL(url)
+      this.setAnnotationDirty(false)
+      return true
+    } catch (error) {
+      console.error('Annotation save failed', error)
+      viewerState.error = error instanceof Error ? error.message : '批注保存失败。'
+      this.setAnnotationDirty(true)
+      return false
+    } finally {
+      if (token) void window.lw?.invoke('pdf.annotationRevokeSaveGrant', { token }).catch(() => {})
+      this.annotationSaving = false
+      viewerState.annotationSaving = false
+    }
+  }
   zoomIn() { this.setScale(zoomLevels.find(value => value > viewerState.scale + .001) ?? 3) }
   zoomOut() { this.setScale([...zoomLevels].reverse().find(value => value < viewerState.scale - .001) ?? .5) }
   fitWidth() { this.setScale('page-width') }
@@ -220,9 +347,15 @@ export class PdfViewerController {
       updatedAt: Date.now(),
     })
     if (!position) return
+    this.latestPosition = position
     this.pendingSave = { fingerprint: this.fingerprint, position }
     if (this.saveTimer !== null) window.clearTimeout(this.saveTimer)
     this.saveTimer = window.setTimeout(() => this.flushReadingPosition(), 500)
+  }
+
+  private setAnnotationDirty(dirty: boolean) {
+    viewerState.annotationDirty = dirty
+    void window.lw?.invoke('app.documentDirty', { dirty }).catch(() => {})
   }
 
   private dispatchFind(query: string, type: '' | 'again', findPrevious = false) {

@@ -1,0 +1,11 @@
+.annotation-toolbar { height: 38px; flex: 0 0 38px; display: flex; align-items: center; gap: 5px; padding: 0 12px; background: #f5f8fb; border-bottom: 1px solid #d7dfe8; user-select: none }
+.annotation-toolbar button { padding: 4px 8px; border: 1px solid transparent; border-radius: 4px; color: #425466; font-size: 12px }
+.annotation-toolbar button:hover:not(:disabled) { background: #e7eff7 }
+.annotation-toolbar button.active { border-color: #8eb7dc; background: #e2effb; color: #1f5d91 }
+.annotation-toolbar button:disabled { cursor: not-allowed; opacity: .48 }
+.annotation-label { margin-right: 4px; color: #657180; font-size: 12px; font-weight: 600 }
+.annotation-dirty { color: #a35d10; font-size: 12px }
+.annotation-readonly { color: #8b5e1a; font-size: 12px }
+.save-annotation { border-color: #b8cde1 !important; background: #edf5fc }
+.toolbar button.active { border-color: #8eb7dc; background: #e2effb; color: #1f5d91 }
+.toolbar button.dirty { color: #9a5a06 }

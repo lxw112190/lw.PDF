@@ -3,6 +3,8 @@
 #include "common/utf8.h"
 
 #include <bcrypt.h>
+#include <chrono>
+#include <iterator>
 #include <stdexcept>
 
 namespace {
@@ -49,4 +51,43 @@ std::optional<PdfFileGrant> PdfFileGrantManager::Find(const std::string& id) con
 bool PdfFileGrantManager::Revoke(const std::string& id) {
   std::lock_guard lock(mutex_);
   return grants_.erase(id) != 0;
+}
+
+PdfSaveGrant PdfFileGrantManager::CreateSave(const std::filesystem::path& selected) {
+  std::error_code error;
+  const auto path = std::filesystem::absolute(selected, error).lexically_normal();
+  if (error || _wcsicmp(path.extension().c_str(), L".pdf") != 0) {
+    throw std::runtime_error("PDF output path is invalid");
+  }
+  PdfSaveGrant grant;
+  grant.id = NewId();
+  grant.path = path;
+  grant.name = WideToUtf8(path.filename().wstring());
+  grant.url = "https://save.lwpdf/" + grant.id + "/document.pdf";
+  grant.expires_at = std::chrono::steady_clock::now() + std::chrono::minutes(30);
+  std::lock_guard lock(mutex_);
+  const auto now = std::chrono::steady_clock::now();
+  for (auto it = save_grants_.begin(); it != save_grants_.end();) {
+    it = it->second.expires_at < now ? save_grants_.erase(it) : std::next(it);
+  }
+  save_grants_[grant.id] = grant;
+  return grant;
+}
+
+std::optional<PdfSaveGrant> PdfFileGrantManager::TakeSave(const std::string& id) {
+  std::lock_guard lock(mutex_);
+  const auto now = std::chrono::steady_clock::now();
+  for (auto it = save_grants_.begin(); it != save_grants_.end();) {
+    it = it->second.expires_at < now ? save_grants_.erase(it) : std::next(it);
+  }
+  const auto it = save_grants_.find(id);
+  if (it == save_grants_.end()) return std::nullopt;
+  const auto grant = it->second;
+  save_grants_.erase(it);
+  return grant;
+}
+
+bool PdfFileGrantManager::RevokeSave(const std::string& id) {
+  std::lock_guard lock(mutex_);
+  return save_grants_.erase(id) != 0;
 }

@@ -13,6 +13,7 @@ class PdfFileGrantManager;
 
 class WebViewHost {
  public:
+  static constexpr UINT kSaveCompleteMessage = WM_APP + 18;
   using Reply = std::function<void(const std::string&)>;
   using MessageHandler = std::function<void(const std::string&, Reply)>;
   using ReadyHandler = std::function<void()>;
@@ -22,6 +23,8 @@ class WebViewHost {
               MessageHandler on_message, ReadyHandler on_ready);
   bool PostJson(const std::string& message);
   void Resize();
+  void CompleteSave(LPARAM payload);
+  static void DiscardSave(LPARAM payload);
 
  private:
   HWND window_ = nullptr;
@@ -39,6 +42,7 @@ class WebViewHost {
   EventRegistrationToken permission_token_{};
   EventRegistrationToken completed_token_{};
   EventRegistrationToken process_failed_token_{};
+  EventRegistrationToken title_token_{};
   UINT64 app_navigation_id_ = 0;
   bool failure_message_shown_ = false;
 };

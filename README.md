@@ -15,6 +15,7 @@
 - 关键词搜索、缩略图懒加载和文档目录
 - 最近文件列表，以及按 PDF 指纹恢复页码、缩放和页内位置
 - 单开关护眼模式：轻微暖化 PDF 页面并降低纯白背景刺激
+- 阅读型批注：高亮、中文文字、手写，以及撤销、重做、删除和另存为
 - 扫描 PDF 页面整理：一键反转全部页面顺序
 - 页面旋转：支持当前页、全部页面和指定页面左转 90°、180°、右转 90°
 - Native FileGrant + HTTP Range：大型 PDF 不经过 IPC/Base64 复制
@@ -43,6 +44,8 @@ cmake --build build-native --config Release --target lw_pdf
 
 页面整理基于 [qpdf](https://qpdf.readthedocs.io/)（libqpdf 12.2.0）在 Native 进程内做 PDF 结构级变换，不重编码页面内容、不把整份 PDF 复制进 JavaScript，并始终“另存为新 PDF”，不会覆盖原文件。旋转采用相对方向，已有 `/Rotate` 的页面会在其基础上叠加。整理受密码保护的 PDF 暂不支持。
 
+批注由 PDF.js Annotation Editor 生成，Native 只提供限时一次性的 SaveGrant，并将保存数据流式写入临时文件后原子替换。批注保存同样始终另存为新 PDF，不参与 qpdf 页面变换；保存后会重新打开生成的文件并恢复阅读位置。
+
 ## Windows 集成
 
 lw.PDF 的 Native 宿主使用 HKEY_CURRENT_USER 注册 `.pdf` 打开方式与右键菜单，不会修改 Windows 的默认 PDF 应用。移动 EXE 后，Windows 集成窗口会提示修复关联。
@@ -58,6 +61,8 @@ ctest --test-dir build-native -C Release --output-on-failure -R "^lw_pdf"
 GitHub Actions 会在推送和拉取请求时自动执行依赖安装、构建和测试。
 
 Native 测试重点覆盖 HTTP Range 边界、受限文件流、128 MiB 大 PDF 和连续 FileGrant 切换，防止桌面文件通路退回整文件复制。
+
+批注发布前的人工验收项目见 [v0.6.0 批注发布验收清单](docs/annotation-release-checklist.md)。
 
 最近文件路径仅由 Native 保存在 `%LocalAppData%\lw.PDF\recent.json`，网页层只接收不透明 ID；重新打开时会重新校验文件并签发新的 FileGrant。阅读位置保存在 WebView2 本地存储中，以 PDF 指纹区分文档，最多保留 100 份记录。
 
@@ -81,6 +86,8 @@ Windows file dialog / command line / drop
        C++ Native FileGrant
                     ↓
 PDF.js ← HTTPS Range responses from bounded native streams
+                    ↓
+PDF.js Annotation Editor → SaveGrant PUT → Native atomic save
 ```
 
 ## 联系与支持

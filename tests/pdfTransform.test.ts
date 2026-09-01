@@ -82,6 +82,7 @@ describe('transformErrorMessage', () => {
   it('maps known codes and prefers the native message otherwise', () => {
     expect(transformErrorMessage('PDF_PASSWORD_REQUIRED')).toBe('当前版本暂不支持整理受密码保护的 PDF。')
     expect(transformErrorMessage('PDF_OUTPUT_WRITE_FAILED')).toContain('磁盘空间')
+    expect(transformErrorMessage('PDF_UNSAVED_ANNOTATIONS')).toContain('未保存的批注')
     expect(transformErrorMessage('X', 'custom')).toBe('custom')
     expect(transformErrorMessage('X')).toContain('PDF 整理失败')
   })

@@ -21,6 +21,7 @@ class BridgeDispatcher {
   std::optional<std::string> TakeLaunchEvent();
   void CompleteTransform(LPARAM payload);
   static void DiscardTransformCompletion(LPARAM payload);
+  bool IsDirty() const { return dirty_; }
 
  private:
   HWND owner_;
@@ -28,4 +29,5 @@ class BridgeDispatcher {
   std::shared_ptr<RecentFileStore> recent_files_;
   std::optional<std::wstring> launch_path_;
   bool transform_busy_ = false;
+  bool dirty_ = false;
 };

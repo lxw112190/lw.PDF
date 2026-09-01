@@ -19,6 +19,7 @@ const errorMessages: Record<string, string> = {
   PDF_PAGE_RANGE_INVALID: '页面范围格式不正确，请输入如 1,3,5-8。',
   PDF_PASSWORD_REQUIRED: '当前版本暂不支持整理受密码保护的 PDF。',
   PDF_OUTPUT_WRITE_FAILED: '无法写入目标文件，请检查磁盘空间或文件权限。',
+  PDF_UNSAVED_ANNOTATIONS: '当前 PDF 有未保存的批注，请先另存批注后再整理页面。',
 }
 
 export function transformErrorMessage(code: string, message?: string): string {

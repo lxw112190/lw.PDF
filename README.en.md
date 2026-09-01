@@ -15,6 +15,7 @@ A lightweight Windows desktop PDF viewer powered by Vue 3, TypeScript, PDF.js, a
 - Full-text search, lazy-loaded thumbnails, and document outlines
 - Recent files plus page, zoom, and in-page reading-position restoration by PDF fingerprint
 - One-click eye-care mode with subtly warmer PDF pages and reduced white glare
+- Reading annotations: highlights, Chinese free text, ink, undo, redo, delete, and Save As
 - Scanned-PDF page organization: reverse all pages in one click
 - Page rotation: rotate the current page, all pages, or a custom range by 90° left, 180°, or 90° right
 - Native FileGrant with HTTP Range support for large PDFs without IPC or Base64 copies
@@ -43,6 +44,8 @@ The executable is generated at `build-native\Release\lw.PDF.exe`. Frontend asset
 
 Page organization is built on [qpdf](https://qpdf.readthedocs.io/) (libqpdf 12.2.0) and performs structural PDF transformations inside the native process: page content is never re-encoded, the whole PDF is never copied into JavaScript, and results are always saved as a new file without overwriting the original. Rotations are relative, stacking on top of any existing `/Rotate` entries. Organizing password-protected PDFs is not supported yet.
 
+Annotations are created by the PDF.js Annotation Editor. Native code only issues a short-lived, one-time SaveGrant and streams the saved bytes to a temporary file before an atomic replacement. Annotation saving also always uses Save As, does not involve qpdf page transforms, and reopens the resulting file while restoring the reading position.
+
 ## Windows Integration
 
 The native lw.PDF host registers `.pdf` Open With entries and a context-menu command under HKEY_CURRENT_USER. It never changes the current default PDF application. If the executable is moved, the Windows Integration dialog detects the stale path and offers to repair the registration.
@@ -58,6 +61,8 @@ ctest --test-dir build-native -C Release --output-on-failure -R "^lw_pdf"
 GitHub Actions runs dependency installation, builds, and tests for every push and pull request.
 
 Native tests focus on HTTP Range boundaries, bounded file streams, a 128 MiB PDF, and continuous FileGrant switching so the desktop data path cannot regress to whole-file copying.
+
+The pre-release manual acceptance matrix is available in the [v0.6.0 annotation release checklist](docs/annotation-release-checklist.md).
 
 Native code alone stores recent file paths in `%LocalAppData%\lw.PDF\recent.json`; the web layer receives only opaque IDs. Reopening a recent file validates it again and issues a fresh FileGrant. Reading positions are stored in WebView2 local storage by PDF fingerprint, with at most 100 document records retained.
 
@@ -81,6 +86,8 @@ Windows file dialog / command line / drop
        C++ Native FileGrant
                     ↓
 PDF.js ← HTTPS Range responses from bounded native streams
+                    ↓
+PDF.js Annotation Editor → SaveGrant PUT → Native atomic save
 ```
 
 ## Contact and Support

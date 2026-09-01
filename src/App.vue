@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import AboutDialog from './components/AboutDialog.vue'
+import AnnotationToolbar from './components/AnnotationToolbar.vue'
 import AppToolbar from './components/AppToolbar.vue'
 import EmptyState from './components/EmptyState.vue'
 import LoadingOverlay from './components/LoadingOverlay.vue'
@@ -80,6 +81,10 @@ async function openNative() {
   } catch {
     viewerState.error = '无法打开所选文件，请确认它仍可访问。'
   }
+}
+
+async function saveAnnotations() {
+  await viewer.value?.saveAnnotations()
 }
 
 async function openNativeFile(file: NativeFile) {
@@ -176,7 +181,13 @@ function onKeydown(event: KeyboardEvent) {
     viewerState.searchVisible = true
     return
   }
+  if (event.ctrlKey && event.key.toLowerCase() === 's') {
+    event.preventDefault()
+    void saveAnnotations()
+    return
+  }
   if (event.key === 'Escape') {
+    if (viewerState.annotationMode !== 0) viewer.value?.setAnnotationMode(0)
     viewerState.searchVisible = false
     viewerState.error = null
     aboutVisible.value = false
@@ -209,12 +220,16 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'End' && !event.ctrlKey) viewer.value?.setPage(viewerState.pageCount)
 }
 
-function onBeforeUnload() {
+function onBeforeUnload(event: BeforeUnloadEvent) {
   viewer.value?.flushReadingPosition()
+  if (viewerState.annotationDirty || viewerState.annotationSaving) {
+    event.preventDefault()
+    event.returnValue = ''
+  }
 }
 
-watch(() => viewerState.documentName, name => {
-  document.title = name ? `${name} - lw.PDF` : 'lw.PDF'
+watch(() => [viewerState.documentName, viewerState.annotationDirty] as const, ([name, dirty]) => {
+  document.title = name ? `${dirty ? '* ' : ''}${name} - lw.PDF` : 'lw.PDF'
 })
 
 function onDesktopFileOpened(payload: unknown) {
@@ -255,6 +270,7 @@ onUnmounted(() => {
       @integration="integrationVisible = true"
       @page-tools="pageToolsVisible = true"
     />
+    <AnnotationToolbar :viewer="viewer" @save="saveAnnotations" />
     <main class="workspace">
       <PdfSidebar
         v-if="viewerState.pageCount && viewerState.sidebarVisible"
