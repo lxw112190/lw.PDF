@@ -4,6 +4,7 @@
 #include "common/native_log.h"
 #include "common/utf8.h"
 #include "dialogs/file_dialog.h"
+#include "pdf/pdf_page_editor.h"
 #include "pdf/pdf_transformer.h"
 #include "runtime/file_grant.h"
 #include "runtime/recent_files.h"
@@ -39,6 +40,15 @@ struct TransformCompletion {
   std::wstring output_path;
   BridgeDispatcher::Reply reply;
   PdfTransformResult result;
+  ULONGLONG duration_ms = 0;
+};
+
+struct PageEditCompletion {
+  std::string id;
+  std::wstring output_path;
+  std::uint32_t final_page_number = 1;
+  BridgeDispatcher::Reply reply;
+  PdfPageEditResult result;
   ULONGLONG duration_ms = 0;
 };
 }
@@ -120,6 +130,68 @@ void BridgeDispatcher::CompleteTransform(LPARAM payload) {
   }
 }
 
+void BridgeDispatcher::DiscardPageEditCompletion(LPARAM payload) {
+  delete reinterpret_cast<PageEditCompletion*>(payload);
+}
+
+void BridgeDispatcher::CompletePageEdit(LPARAM payload) {
+  std::unique_ptr<PageEditCompletion> completion(
+      reinterpret_cast<PageEditCompletion*>(payload));
+  transform_busy_ = false;
+  if (completion->result.error != PdfPageEditError::None) {
+    const char* code = "PDF_PAGE_EDIT_FAILED";
+    const char* message = "页面整理失败，请确认文件未损坏。";
+    switch (completion->result.error) {
+      case PdfPageEditError::SourceUnavailable:
+        code = "PDF_SOURCE_UNAVAILABLE";
+        message = "当前 PDF 文件权限已失效，请重新打开文件后再试。";
+        break;
+      case PdfPageEditError::InvalidPlan:
+        code = "PDF_PAGE_PLAN_INVALID";
+        message = "页面整理方案无效，请重新操作。";
+        break;
+      case PdfPageEditError::PasswordRequired:
+        code = "PDF_PASSWORD_REQUIRED";
+        message = "当前版本暂不支持整理受密码保护的 PDF。";
+        break;
+      case PdfPageEditError::PermissionDenied:
+        code = "PDF_PAGE_EDIT_NOT_ALLOWED";
+        message = "当前 PDF 禁止页面整理。";
+        break;
+      case PdfPageEditError::OutputWriteFailed:
+        code = "PDF_OUTPUT_WRITE_FAILED";
+        message = "无法写入目标文件，请检查磁盘空间或文件权限。";
+        break;
+      case PdfPageEditError::SameFile:
+        code = "PDF_SAME_FILE";
+        message = "无法覆盖原文件，请选择其他保存位置。";
+        break;
+      default:
+        break;
+    }
+    NativeLogError("pdf.page_edit.failed error=" +
+                   std::to_string(static_cast<int>(completion->result.error)) +
+                   " duration_ms=" + std::to_string(completion->duration_ms));
+    completion->reply(Error(completion->id, code, message).dump());
+    return;
+  }
+  try {
+    const auto new_grant = grants_->Create(completion->output_path);
+    NativeLogInfo("pdf.page_edit.completed pages=" +
+                  std::to_string(completion->result.page_count) +
+                  " size=" + std::to_string(new_grant.size) +
+                  " duration_ms=" + std::to_string(completion->duration_ms));
+    completion->reply(Success(completion->id,
+                              {{"cancelled", false},
+                               {"file", PublicGrant(new_grant)},
+                               {"pageNumber", completion->final_page_number}}).dump());
+  } catch (const std::exception& error) {
+    NativeLogError("pdf.page_edit.grant.failed: " + std::string(error.what()));
+    completion->reply(Error(completion->id, "PDF_OUTPUT_WRITE_FAILED",
+                            "Cannot access the organized PDF").dump());
+  }
+}
+
 void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
   std::string id;
   std::string method = "unparsed";
@@ -176,7 +248,22 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
         reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid document state").dump());
         return;
       }
+      if ((params.contains("annotationDirty") && !params.at("annotationDirty").is_boolean()) ||
+          (params.contains("organizerDirty") && !params.at("organizerDirty").is_boolean())) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid document state details").dump());
+        return;
+      }
       dirty_ = params.at("dirty").get<bool>();
+      if (params.contains("annotationDirty") && params.at("annotationDirty").is_boolean()) {
+        annotation_dirty_ = params.at("annotationDirty").get<bool>();
+      }
+      if (params.contains("organizerDirty") && params.at("organizerDirty").is_boolean()) {
+        organizer_dirty_ = params.at("organizerDirty").get<bool>();
+      }
+      if (!dirty_) {
+        annotation_dirty_ = false;
+        organizer_dirty_ = false;
+      }
       NativeLogDebug(std::string("document.dirty=") + (dirty_ ? "true" : "false"));
       reply(Success(id, nullptr).dump());
       return;
@@ -223,6 +310,110 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
       recent_files_->Clear();
       NativeLogInfo("recent.cleared");
       reply(Success(id, nullptr).dump());
+      return;
+    }
+    if (method == "pdf.pageEditSaveAs") {
+      if (annotation_dirty_) {
+        reply(Error(id, "PDF_UNSAVED_ANNOTATIONS",
+                    "Save annotations before organizing this PDF").dump());
+        return;
+      }
+      if (transform_busy_) {
+        reply(Error(id, "PDF_PAGE_EDIT_FAILED", "页面整理正在进行中。").dump());
+        return;
+      }
+      if (!params.contains("sourceGrantId") || !params.at("sourceGrantId").is_string() ||
+          !params.contains("plan") || !params.at("plan").is_object() ||
+          !params.at("plan").contains("pages") ||
+          !params.at("plan").at("pages").is_array()) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid page plan").dump());
+        return;
+      }
+      const auto plan_json = params.at("plan").at("pages");
+      if (plan_json.empty() || plan_json.size() > 100000U) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid page plan size").dump());
+        return;
+      }
+      if ((params.contains("focusedSourcePage") &&
+           !params.at("focusedSourcePage").is_number_unsigned())) {
+        reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid focused page").dump());
+        return;
+      }
+      PdfPageEditRequest page_request;
+      page_request.pages.reserve(plan_json.size());
+      for (const auto& item : plan_json) {
+        if (!item.is_object() || !item.contains("sourcePage") ||
+            !item.at("sourcePage").is_number_unsigned() ||
+            item.at("sourcePage").get<std::uint64_t>() < 1 ||
+            item.at("sourcePage").get<std::uint64_t>() > UINT32_MAX ||
+            !item.contains("rotation") || !item.at("rotation").is_number_unsigned() ||
+            item.at("rotation").get<std::uint64_t>() > 270U) {
+          reply(Error(id, "PDF_PAGE_PLAN_INVALID", "Invalid page plan item").dump());
+          return;
+        }
+        const auto rotation = item.at("rotation").get<std::uint16_t>();
+        if (rotation != 0 && rotation != 90 && rotation != 180 && rotation != 270) {
+          reply(Error(id, "PDF_PAGE_PLAN_INVALID", "Invalid page rotation").dump());
+          return;
+        }
+        page_request.pages.push_back({item.at("sourcePage").get<std::uint32_t>(), rotation});
+      }
+      std::uint32_t focused_source_page = 1;
+      if (params.contains("focusedSourcePage")) {
+        if (!params.at("focusedSourcePage").is_number_unsigned() ||
+            params.at("focusedSourcePage").get<std::uint64_t>() < 1 ||
+            params.at("focusedSourcePage").get<std::uint64_t>() > UINT32_MAX) {
+          reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid focused page").dump());
+          return;
+        }
+        focused_source_page = params.at("focusedSourcePage").get<std::uint32_t>();
+      }
+      const auto grant = grants_->Find(params.at("sourceGrantId").get<std::string>());
+      if (!grant) {
+        reply(Error(id, "PDF_SOURCE_UNAVAILABLE", "PDF source is no longer available").dump());
+        return;
+      }
+      const auto suggested = grant->path.stem().wstring() + L"_整理.pdf";
+      const auto output_path = ChoosePdfSavePath(owner_, suggested);
+      if (!output_path) {
+        NativeLogInfo("pdf.page_edit.cancelled");
+        reply(Success(id, {{"cancelled", true}}).dump());
+        return;
+      }
+      std::error_code source_error;
+      const auto normalized_output = std::filesystem::absolute(*output_path, source_error).lexically_normal();
+      source_error.clear();
+      const auto normalized_source = std::filesystem::absolute(grant->path, source_error).lexically_normal();
+      if (!source_error && _wcsicmp(normalized_output.c_str(), normalized_source.c_str()) == 0) {
+        reply(Error(id, "PDF_SAME_FILE", "无法覆盖原文件，请选择其他保存位置。").dump());
+        return;
+      }
+      transform_busy_ = true;
+      const auto started = GetTickCount64();
+      auto completion = std::make_unique<PageEditCompletion>();
+      completion->id = id;
+      completion->output_path = *output_path;
+      completion->reply = std::move(reply);
+      const auto worker_owner = owner_;
+      const auto input_path = grant->path.wstring();
+      std::thread([worker_owner, input_path, page_request, focused_source_page, started,
+                   completion = std::move(completion)]() mutable {
+        completion->result = EditPdfPages(input_path, completion->output_path, page_request);
+        completion->duration_ms = GetTickCount64() - started;
+        if (completion->result.error == PdfPageEditError::None) {
+          for (std::size_t index = 0; index < page_request.pages.size(); ++index) {
+            if (page_request.pages[index].source_page == focused_source_page) {
+              completion->final_page_number = static_cast<std::uint32_t>(index + 1U);
+              break;
+            }
+          }
+        }
+        auto* payload = completion.release();
+        if (!PostMessageW(worker_owner, BridgeDispatcher::kPageEditCompleteMessage, 0,
+                          reinterpret_cast<LPARAM>(payload))) {
+          BridgeDispatcher::DiscardPageEditCompletion(reinterpret_cast<LPARAM>(payload));
+        }
+      }).detach();
       return;
     }
     if (method == "pdf.transformSaveAs") {

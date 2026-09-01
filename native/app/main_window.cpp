@@ -138,6 +138,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
       if (state && state->bridge) state->bridge->CompleteTransform(lparam);
       else BridgeDispatcher::DiscardTransformCompletion(lparam);
       return 0;
+    case BridgeDispatcher::kPageEditCompleteMessage:
+      if (state && state->bridge) state->bridge->CompletePageEdit(lparam);
+      else BridgeDispatcher::DiscardPageEditCompletion(lparam);
+      return 0;
     case WebViewHost::kSaveCompleteMessage:
       if (state && state->webview) state->webview->CompleteSave(lparam);
       else WebViewHost::DiscardSave(lparam);
@@ -146,7 +150,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
     case WM_CLOSE:
       if (state && state->bridge && state->bridge->IsDirty()) {
         const auto result = MessageBoxW(window,
-            L"当前 PDF 有未保存的批注，确定要关闭吗？\n\n关闭后批注将丢失。",
+            L"当前 PDF 有未保存的修改，确定要关闭吗？\n\n关闭后这些修改将丢失。",
             L"lw.PDF", MB_OKCANCEL | MB_ICONWARNING);
         if (result != IDOK) return 0;
         state->bridge->Dispatch(R"({"type":"request","id":"close-cleanup","method":"app.documentDirty","params":{"dirty":false}})", [](const std::string&) {});

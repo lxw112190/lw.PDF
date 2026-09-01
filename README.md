@@ -16,8 +16,7 @@
 - 最近文件列表，以及按 PDF 指纹恢复页码、缩放和页内位置
 - 单开关护眼模式：轻微暖化 PDF 页面并降低纯白背景刺激
 - 阅读型批注：高亮、中文文字、手写，以及撤销、重做、删除和另存为
-- 扫描 PDF 页面整理：一键反转全部页面顺序
-- 页面旋转：支持当前页、全部页面和指定页面左转 90°、180°、右转 90°
+- 扫描 PDF 视觉化页面整理：缩略图多选、拖拽排序、反转、旋转、撤销/重做和另存为
 - Native FileGrant + HTTP Range：大型 PDF 不经过 IPC/Base64 复制
 - 内置 PDF.js CMap 与标准字体资源，兼容未嵌入中文字体的 PDF
 - 关于窗口、应用图标、动态文档标题与 Windows 文件关联
@@ -42,7 +41,7 @@ cmake --build build-native --config Release --target lw_pdf
 
 生成文件为 `build-native\Release\lw.PDF.exe`。前端资源会在构建时嵌入 EXE，运行时自动释放到当前用户的 LocalAppData 缓存；无需 `lw.Web2Exe` 或其他打包运行时。
 
-页面整理基于 [qpdf](https://qpdf.readthedocs.io/)（libqpdf 12.2.0）在 Native 进程内做 PDF 结构级变换，不重编码页面内容、不把整份 PDF 复制进 JavaScript，并始终“另存为新 PDF”，不会覆盖原文件。旋转采用相对方向，已有 `/Rotate` 的页面会在其基础上叠加。整理受密码保护的 PDF 暂不支持。
+页面整理基于 [qpdf](https://qpdf.readthedocs.io/)（libqpdf 12.2.0）在 Native 进程内做 PDF 结构级变换，不重编码页面内容、不把整份 PDF 复制进 JavaScript，并始终“另存为新 PDF”，不会覆盖原文件。旋转采用相对方向，已有 `/Rotate` 的页面会在其基础上叠加。整理受密码保护或禁止页面组装的 PDF 暂不支持。
 
 批注由 PDF.js Annotation Editor 生成，Native 只提供限时一次性的 SaveGrant，并将保存数据流式写入临时文件后原子替换。批注保存同样始终另存为新 PDF，不参与 qpdf 页面变换；保存后会重新打开生成的文件并恢复阅读位置。
 

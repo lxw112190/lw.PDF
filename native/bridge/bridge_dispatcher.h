@@ -14,13 +14,16 @@ class BridgeDispatcher {
  public:
   using Reply = std::function<void(const std::string&)>;
   static constexpr UINT kTransformCompleteMessage = WM_APP + 17;
+  static constexpr UINT kPageEditCompleteMessage = WM_APP + 19;
   BridgeDispatcher(HWND owner, std::shared_ptr<PdfFileGrantManager> grants,
                    std::shared_ptr<RecentFileStore> recent_files);
   void Dispatch(const std::string& request, Reply reply);
   void SetLaunchPath(const std::optional<std::wstring>& path);
   std::optional<std::string> TakeLaunchEvent();
   void CompleteTransform(LPARAM payload);
+  void CompletePageEdit(LPARAM payload);
   static void DiscardTransformCompletion(LPARAM payload);
+  static void DiscardPageEditCompletion(LPARAM payload);
   bool IsDirty() const { return dirty_; }
 
  private:
@@ -30,4 +33,6 @@ class BridgeDispatcher {
   std::optional<std::wstring> launch_path_;
   bool transform_busy_ = false;
   bool dirty_ = false;
+  bool annotation_dirty_ = false;
+  bool organizer_dirty_ = false;
 };

@@ -16,8 +16,7 @@ A lightweight Windows desktop PDF viewer powered by Vue 3, TypeScript, PDF.js, a
 - Recent files plus page, zoom, and in-page reading-position restoration by PDF fingerprint
 - One-click eye-care mode with subtly warmer PDF pages and reduced white glare
 - Reading annotations: highlights, Chinese free text, ink, undo, redo, delete, and Save As
-- Scanned-PDF page organization: reverse all pages in one click
-- Page rotation: rotate the current page, all pages, or a custom range by 90° left, 180°, or 90° right
+- Visual scanned-PDF page organizer with multi-select thumbnails, drag-to-reorder, reverse, rotation, undo/redo, and Save As
 - Native FileGrant with HTTP Range support for large PDFs without IPC or Base64 copies
 - Bundled PDF.js CMaps and standard fonts for PDFs with non-embedded Chinese fonts
 - About dialog, application icon, dynamic document titles, and Windows file associations
@@ -42,7 +41,7 @@ cmake --build build-native --config Release --target lw_pdf
 
 The executable is generated at `build-native\Release\lw.PDF.exe`. Frontend assets are embedded into the executable during the build and extracted to the current user's LocalAppData cache at runtime. `lw.Web2Exe` and other packaging runtimes are not required.
 
-Page organization is built on [qpdf](https://qpdf.readthedocs.io/) (libqpdf 12.2.0) and performs structural PDF transformations inside the native process: page content is never re-encoded, the whole PDF is never copied into JavaScript, and results are always saved as a new file without overwriting the original. Rotations are relative, stacking on top of any existing `/Rotate` entries. Organizing password-protected PDFs is not supported yet.
+Page organization is built on [qpdf](https://qpdf.readthedocs.io/) (libqpdf 12.2.0) and performs structural PDF transformations inside the native process: page content is never re-encoded, the whole PDF is never copied into JavaScript, and results are always saved as a new file without overwriting the original. Rotations are relative, stacking on top of any existing `/Rotate` entries. Password-protected or assembly-restricted PDFs are not supported yet.
 
 Annotations are created by the PDF.js Annotation Editor. Native code only issues a short-lived, one-time SaveGrant and streams the saved bytes to a temporary file before an atomic replacement. Annotation saving also always uses Save As, does not involve qpdf page transforms, and reopens the resulting file while restoring the reading position.
 

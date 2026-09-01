@@ -162,7 +162,8 @@ add_executable(lw_pdf WIN32
   native/app/main.cpp native/app/main_window.cpp native/app/command_line.cpp
   native/associations/file_association.cpp native/bridge/bridge_dispatcher.cpp
   native/common/native_log.cpp
-  native/dialogs/file_dialog.cpp native/pdf/pdf_transformer.cpp
+  native/dialogs/file_dialog.cpp native/pdf/pdf_page_editor.cpp
+  native/pdf/pdf_transformer.cpp
   native/resources/frontend_bundle.cpp
   native/runtime/atomic_pdf_writer.cpp native/runtime/bounded_file_stream.cpp
   native/runtime/file_grant.cpp
@@ -194,6 +195,16 @@ if(LWPDF_BUILD_TESTING)
   target_compile_options(lw_pdf_transform_tests PRIVATE /W4 /permissive- /EHsc)
   target_link_libraries(lw_pdf_transform_tests PRIVATE libqpdf zlibstatic)
   add_test(NAME lw_pdf_transform_tests COMMAND lw_pdf_transform_tests)
+
+  add_executable(lw_pdf_page_editor_tests
+    tests/pdf_page_editor_tests.cpp
+    native/pdf/pdf_page_editor.cpp)
+  target_include_directories(lw_pdf_page_editor_tests PRIVATE native)
+  target_compile_definitions(lw_pdf_page_editor_tests PRIVATE
+    WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+  target_compile_options(lw_pdf_page_editor_tests PRIVATE /W4 /permissive- /EHsc)
+  target_link_libraries(lw_pdf_page_editor_tests PRIVATE libqpdf zlibstatic)
+  add_test(NAME lw_pdf_page_editor_tests COMMAND lw_pdf_page_editor_tests)
 
   add_executable(lw_pdf_native_tests
     tests/native_integration_tests.cpp

@@ -4,6 +4,7 @@ import type { PDFDocumentLoadingTask } from 'pdfjs-dist'
 import { EventBus, PDFFindController, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { viewerState } from '../stores/viewerState'
+import { pageOrganizerState } from '../stores/pageOrganizerState'
 import { nativeFileToPdfSource, revokeDesktopFile, setCurrentGrant, type NativeFile } from './native'
 import { createPdfLoadingSource } from './pdfLoadingSource'
 import { ReadingPositionStore, normalizeReadingPosition, type ReadingPosition } from './readingPosition'
@@ -137,6 +138,8 @@ export class PdfViewerController {
         permissions.includes(pdfjsLib.PermissionFlag.MODIFY_ANNOTATIONS)
       )
       viewerState.annotationEditable = !pdf.isPureXfa && canEditAnnotations
+      viewerState.pageEditAllowed = !permissions ||
+        permissions.includes(pdfjsLib.PermissionFlag.ASSEMBLE)
       this.annotationUiManager = null
       const storage = pdf.annotationStorage
       storage.onSetModified = () => this.setAnnotationDirty(true)
@@ -188,10 +191,10 @@ export class PdfViewerController {
     viewerState.annotationToolbarVisible = false
     viewerState.annotationMode = pdfjsLib.AnnotationEditorType.NONE
     viewerState.annotationEditable = true
+    viewerState.pageEditAllowed = true
     viewerState.annotationCanUndo = false
     viewerState.annotationCanRedo = false
     viewerState.annotationHasSelection = false
-    void window.lw?.invoke('app.documentDirty', { dirty: false }).catch(() => {})
     this.fingerprint = null
     this.suppressPositionSave = true
     ;(this.viewer as any)?.setDocument(null)
@@ -253,8 +256,9 @@ export class PdfViewerController {
   redoAnnotation() { if (this.annotationUiManager?.redo) this.annotationUiManager.redo(); else this.eventBus.dispatch('editingaction', { source: this, name: 'redo' }); }
   deleteAnnotation() { if (this.annotationUiManager?.delete) this.annotationUiManager.delete(); else this.eventBus.dispatch('editingaction', { source: this, name: 'delete' }); }
   async confirmBeforeReplace() {
-    if (!viewerState.annotationDirty && !viewerState.annotationSaving) return true
-    return window.confirm('当前 PDF 有未保存的批注，确定要打开其他文件吗？\n\n未保存的批注将丢失。')
+    if (!viewerState.annotationDirty && !viewerState.annotationSaving &&
+        !pageOrganizerState.dirty && !pageOrganizerState.saving) return true
+    return window.confirm('当前 PDF 有未保存的修改，确定要打开其他文件吗？\n\n未保存的修改将丢失。')
   }
   async saveAnnotations() {
     const pdf = viewerState.document
@@ -360,7 +364,6 @@ export class PdfViewerController {
 
   private setAnnotationDirty(dirty: boolean) {
     viewerState.annotationDirty = dirty
-    void window.lw?.invoke('app.documentDirty', { dirty }).catch(() => {})
   }
 
   private dispatchFind(query: string, type: '' | 'again', findPrevious = false) {
