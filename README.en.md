@@ -62,7 +62,6 @@ GitHub Actions runs dependency installation, builds, and tests for every push an
 
 Native tests focus on HTTP Range boundaries, bounded file streams, a 128 MiB PDF, and continuous FileGrant switching so the desktop data path cannot regress to whole-file copying.
 
-The pre-release manual acceptance matrix is available in the [v0.6.0 annotation release checklist](docs/annotation-release-checklist.md).
 
 Native code alone stores recent file paths in `%LocalAppData%\lw.PDF\recent.json`; the web layer receives only opaque IDs. Reopening a recent file validates it again and issues a fresh FileGrant. Reading positions are stored in WebView2 local storage by PDF fingerprint, with at most 100 document records retained.
 

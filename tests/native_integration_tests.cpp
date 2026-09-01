@@ -2,9 +2,12 @@
 #include "associations/file_association.h"
 #include "common/utf8.h"
 #include "runtime/bounded_file_stream.h"
+#include "runtime/atomic_pdf_writer.h"
 #include "runtime/file_grant.h"
 #include "runtime/http_range.h"
 #include "runtime/recent_files.h"
+
+#include <Shlwapi.h>
 
 #include <array>
 #include <cstdint>
@@ -73,6 +76,42 @@ int main() {
   Check(grants.TakeSave(save_grant.id).has_value() &&
             !grants.TakeSave(save_grant.id).has_value(),
         "consumes an annotation save URL exactly once");
+
+  const auto atomic_root = root / "atomic";
+  std::filesystem::create_directories(atomic_root);
+  const auto atomic_temp = atomic_root / "document.tmp";
+  const auto atomic_output = atomic_root / "document.pdf";
+  auto atomic_input = SHCreateMemStream(
+      reinterpret_cast<const BYTE*>("%PDF-1.7\nannotation"), 19);
+  const auto atomic_result = WritePdfStreamAtomically(
+      atomic_input, atomic_temp, atomic_output);
+  if (atomic_input) atomic_input->Release();
+  Check(atomic_result.success && atomic_result.bytes_written == 19 &&
+            std::filesystem::exists(atomic_output) &&
+            std::filesystem::file_size(atomic_output) == 19 &&
+            !std::filesystem::exists(atomic_temp),
+        "commits a complete PDF only after the atomic write succeeds");
+  std::ofstream(atomic_output, std::ios::binary | std::ios::trunc)
+      << "original";
+  auto invalid_input = SHCreateMemStream(
+      reinterpret_cast<const BYTE*>("not PDF"), 8);
+  const auto invalid_result = WritePdfStreamAtomically(
+      invalid_input, atomic_temp, atomic_output);
+  if (invalid_input) invalid_input->Release();
+  Check(!invalid_result.success && invalid_result.error == "invalid_pdf_body" &&
+            std::filesystem::exists(atomic_output) &&
+            !std::filesystem::exists(atomic_temp),
+        "leaves the previous PDF untouched when validation fails");
+  const auto inaccessible_temp = atomic_root / "missing" / "document.tmp";
+  auto unavailable_input = SHCreateMemStream(
+      reinterpret_cast<const BYTE*>("%PDF-1.7\nannotation"), 19);
+  const auto unavailable_result = WritePdfStreamAtomically(
+      unavailable_input, inaccessible_temp, atomic_output);
+  if (unavailable_input) unavailable_input->Release();
+  Check(!unavailable_result.success &&
+            unavailable_result.error == "output_open_failed" &&
+            std::filesystem::exists(atomic_output),
+        "does not replace the previous PDF when the temporary file cannot open");
 
   CheckRange(L"", 100, 0, 99, false, "serves a full response without Range");
   CheckRange(L"bytes=0-99", 100, 0, 99, true,

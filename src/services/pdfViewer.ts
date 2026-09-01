@@ -128,8 +128,15 @@ export class PdfViewerController {
       } catch {
         permissions = null
       }
-      viewerState.annotationEditable = !pdf.isPureXfa &&
-        (!permissions || permissions.includes(pdfjsLib.PermissionFlag.MODIFY_CONTENTS))
+      // PDF.js disables annotation editors without MODIFY_CONTENTS, while
+      // the PDF permission bit for annotations is MODIFY_ANNOTATIONS. Require
+      // both when a permission list is present so the toolbar never advertises
+      // an operation that the document does not authorize.
+      const canEditAnnotations = !permissions || (
+        permissions.includes(pdfjsLib.PermissionFlag.MODIFY_CONTENTS) &&
+        permissions.includes(pdfjsLib.PermissionFlag.MODIFY_ANNOTATIONS)
+      )
+      viewerState.annotationEditable = !pdf.isPureXfa && canEditAnnotations
       this.annotationUiManager = null
       const storage = pdf.annotationStorage
       storage.onSetModified = () => this.setAnnotationDirty(true)
@@ -266,12 +273,12 @@ export class PdfViewerController {
         if (!grant.token || !grant.url) throw new Error('无法创建保存权限。')
         token = grant.token
         bytes = await pdf.saveDocument()
-        const uploadBytes = new Uint8Array(bytes.byteLength)
-        uploadBytes.set(bytes)
         const response = await fetch(grant.url, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/pdf' },
-          body: uploadBytes,
+          // WebView2 accepts Uint8Array request bodies; this assertion keeps
+          // the runtime value intact and avoids a second full-PDF allocation.
+          body: bytes as unknown as BodyInit,
         })
         if (!response.ok) {
           const detail = await response.json().catch(() => null) as { error?: string } | null
@@ -285,9 +292,7 @@ export class PdfViewerController {
         return true
       }
       bytes = await pdf.saveDocument()
-      const browserBytes = new Uint8Array(bytes.byteLength)
-      browserBytes.set(bytes)
-      const blob = new Blob([browserBytes.buffer], { type: 'application/pdf' })
+      const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url

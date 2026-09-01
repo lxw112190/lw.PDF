@@ -62,7 +62,6 @@ GitHub Actions 会在推送和拉取请求时自动执行依赖安装、构建�
 
 Native 测试重点覆盖 HTTP Range 边界、受限文件流、128 MiB 大 PDF 和连续 FileGrant 切换，防止桌面文件通路退回整文件复制。
 
-批注发布前的人工验收项目见 [v0.6.0 批注发布验收清单](docs/annotation-release-checklist.md)。
 
 最近文件路径仅由 Native 保存在 `%LocalAppData%\lw.PDF\recent.json`，网页层只接收不透明 ID；重新打开时会重新校验文件并签发新的 FileGrant。阅读位置保存在 WebView2 本地存储中，以 PDF 指纹区分文档，最多保留 100 份记录。
 

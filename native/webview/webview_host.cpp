@@ -3,6 +3,7 @@
 #include "common/utf8.h"
 #include "common/native_log.h"
 #include "runtime/bounded_file_stream.h"
+#include "runtime/atomic_pdf_writer.h"
 #include "runtime/file_grant.h"
 #include "runtime/http_range.h"
 
@@ -11,8 +12,6 @@
 #include <Shellapi.h>
 
 #include <filesystem>
-#include <fstream>
-#include <array>
 #include <objbase.h>
 #include <string>
 #include <string_view>
@@ -194,25 +193,11 @@ void ReplySave(HWND owner, ICoreWebView2Environment* environment,
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
     Microsoft::WRL::ComPtr<IStream> stream;
     const auto stream_result = CoGetInterfaceAndReleaseStream(marshaled, IID_PPV_ARGS(&stream));
-    if (FAILED(stream_result) || !stream) payload->error = "request_body_unavailable";
-    std::ofstream output(payload->temporary, std::ios::binary | std::ios::trunc);
-    std::array<char, 64 * 1024> buffer{};
-    std::uintmax_t total = 0;
-    bool pdf_header = false;
-    while (payload->error.empty() && output && stream) {
-      ULONG read = 0;
-      if (FAILED(stream->Read(buffer.data(), static_cast<ULONG>(buffer.size()), &read))) { payload->error = "request_read_failed"; break; }
-      if (!read) break;
-      if (total == 0 && read >= 5 && std::string_view(buffer.data(), 5) == "%PDF-") pdf_header = true;
-      total += read;
-      if (total > 2ULL * 1024ULL * 1024ULL * 1024ULL) { payload->error = "pdf_too_large"; break; }
-      output.write(buffer.data(), read);
-    }
-    output.flush(); output.close();
-    if (payload->error.empty() && (!pdf_header || total == 0)) payload->error = "invalid_pdf_body";
-    if (payload->error.empty() && !MoveFileExW(payload->temporary.c_str(), payload->output.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) payload->error = "output_commit_failed";
-    if (!payload->error.empty()) { std::error_code ec; std::filesystem::remove(payload->temporary, ec); }
-    payload->success = payload->error.empty();
+    const auto write_result = FAILED(stream_result) || !stream
+        ? PdfAtomicWriteResult{false, 0, "request_body_unavailable"}
+        : WritePdfStreamAtomically(stream.Get(), payload->temporary, payload->output);
+    payload->error = write_result.error;
+    payload->success = write_result.success;
     CoUninitialize();
     if (!PostMessageW(payload->owner, WebViewHost::kSaveCompleteMessage, 0, reinterpret_cast<LPARAM>(payload))) {
       WebViewHost::DiscardSave(reinterpret_cast<LPARAM>(payload));
