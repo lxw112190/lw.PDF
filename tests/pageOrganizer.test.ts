@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createInitialPagePlan,
+  isDropBeforeHorizontalMidpoint,
   isPlanDirty,
   movePageGroup,
   normalizeRotation,
@@ -58,5 +59,11 @@ describe('page organizer plan', () => {
       ['source-3', 'source-4', 'source-5', 'source-6', 'source-7'])
     expect(selectPageRange(plan, 'source-7', 'source-3')).toEqual(
       ['source-3', 'source-4', 'source-5', 'source-6', 'source-7'])
+  })
+
+  it('uses the horizontal card midpoint for before and after drops', () => {
+    expect(isDropBeforeHorizontalMidpoint(149, 100, 100)).toBe(true)
+    expect(isDropBeforeHorizontalMidpoint(150, 100, 100)).toBe(false)
+    expect(isDropBeforeHorizontalMidpoint(199, 100, 100)).toBe(false)
   })
 })

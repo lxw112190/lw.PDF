@@ -5,7 +5,7 @@ import { viewerState } from '../stores/viewerState'
 
 defineProps<{ viewer: any }>()
 const emit = defineEmits<{ save: [] }>()
-const enabled = computed(() => viewerState.pageCount > 0 && viewerState.annotationEditable && !viewerState.transforming)
+const enabled = computed(() => viewerState.pageCount > 0 && viewerState.annotationEditable)
 const modes = [
   { value: pdfjsLib.AnnotationEditorType.NONE, label: '选择' },
   { value: pdfjsLib.AnnotationEditorType.HIGHLIGHT, label: '高亮' },

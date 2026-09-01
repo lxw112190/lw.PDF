@@ -7,7 +7,6 @@ import EmptyState from './components/EmptyState.vue'
 import LoadingOverlay from './components/LoadingOverlay.vue'
 import PageOrganizer from './components/PageOrganizer.vue'
 import PageOrganizerExitDialog from './components/PageOrganizerExitDialog.vue'
-import PageToolsDialog from './components/PageToolsDialog.vue'
 import PdfSidebar from './components/PdfSidebar.vue'
 import PdfViewerHost from './components/PdfViewerHost.vue'
 import SearchBox from './components/SearchBox.vue'
@@ -20,12 +19,6 @@ import {
   revokeDesktopFile,
   type NativeFile,
 } from './services/native'
-import {
-  reversePdfPages,
-  rotatePdfPages,
-  type PdfPageSelection,
-  type PdfRotationDirection,
-} from './services/pdfTransform'
 import {
   clearRecentFiles,
   loadRecentFiles,
@@ -44,10 +37,10 @@ const viewer = ref<any>(null)
 const input = ref<HTMLInputElement | null>(null)
 const aboutVisible = ref(false)
 const integrationVisible = ref(false)
-const pageToolsVisible = ref(false)
 const dropActive = ref(false)
 const pageOrganizerExitVisible = ref(false)
 let dragDepth = 0
+let readerUiSnapshot: { sidebarVisible: boolean } | null = null
 
 const documentDirty = computed(() =>
   viewerState.annotationDirty || viewerState.annotationSaving ||
@@ -56,35 +49,14 @@ const documentDirty = computed(() =>
 
 async function openSource(source: any, position: any = null, bypassDirtyGuard = false) {
   const opened = await viewer.value?.open(source, position, bypassDirtyGuard)
-  if (opened && pageOrganizerState.active) closePageOrganizer()
+  if (opened && pageOrganizerState.active) closeOrganizerAndRestoreReader()
   return opened
 }
 
-type PageToolsPayload =
-  | { kind: 'reversePages' }
-  | { kind: 'rotatePages'; direction: PdfRotationDirection; pages: PdfPageSelection }
-
-async function applyPageTools(payload: PageToolsPayload) {
-  const grantId = viewerState.currentGrantId
-  if (!grantId) {
-    viewerState.error = '当前 PDF 文件权限已失效，请重新打开文件后再试。'
-    return
-  }
-  viewerState.transforming = true
-  try {
-    const result = payload.kind === 'reversePages'
-      ? await reversePdfPages(grantId)
-      : await rotatePdfPages(grantId, payload.direction, payload.pages)
-    if (result.cancelled) return
-    pageToolsVisible.value = false
-    await openSource(result.source)
-  } catch (error) {
-    viewerState.error = error instanceof Error
-      ? error.message
-      : 'PDF 整理失败，请确认文件未损坏且未受密码保护。'
-  } finally {
-    viewerState.transforming = false
-  }
+function closeOrganizerAndRestoreReader() {
+  closePageOrganizer()
+  if (readerUiSnapshot) viewerState.sidebarVisible = readerUiSnapshot.sidebarVisible
+  readerUiSnapshot = null
 }
 
 function openPageOrganizer() {
@@ -93,7 +65,7 @@ function openPageOrganizer() {
     viewerState.error = '当前 PDF 禁止页面整理。'
     return
   }
-  pageToolsVisible.value = false
+  readerUiSnapshot = { sidebarVisible: viewerState.sidebarVisible }
   viewerState.searchVisible = false
   viewerState.sidebarVisible = false
   viewerState.annotationToolbarVisible = false
@@ -107,12 +79,12 @@ function leavePageOrganizer() {
     pageOrganizerExitVisible.value = true
     return
   }
-  closePageOrganizer()
+  closeOrganizerAndRestoreReader()
 }
 
 function discardPageOrganizer() {
   pageOrganizerExitVisible.value = false
-  closePageOrganizer()
+  closeOrganizerAndRestoreReader()
 }
 
 async function savePageOrganizer() {
@@ -125,7 +97,7 @@ async function savePageOrganizer() {
   try {
     const result = await savePagePlan(grantId, pageOrganizerState.pages, focusedSourcePage)
     if (result.cancelled) return
-    closePageOrganizer()
+    closeOrganizerAndRestoreReader()
     await viewer.value?.open(result.source, {
       pageNumber: Math.min(result.pageNumber || finalPage, viewerState.pageCount || result.pageNumber || finalPage),
       scale: viewerState.scale,
@@ -267,7 +239,6 @@ function onKeydown(event: KeyboardEvent) {
     viewerState.error = null
     aboutVisible.value = false
     integrationVisible.value = false
-    if (!viewerState.transforming) pageToolsVisible.value = false
     return
   }
   if (editing) return
@@ -393,14 +364,6 @@ onUnmounted(() => {
     <WindowsIntegrationDialog
       v-if="integrationVisible"
       @close="integrationVisible = false"
-    />
-    <PageToolsDialog
-      v-if="pageToolsVisible"
-      :page-number="viewerState.pageNumber"
-      :page-count="viewerState.pageCount"
-      :transforming="viewerState.transforming"
-      @close="pageToolsVisible = false"
-      @apply="applyPageTools"
     />
     <input
       ref="input"

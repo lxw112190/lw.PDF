@@ -50,7 +50,7 @@ function toggleAnnotation(viewer: any) {
         <span class="menu-separator" role="separator"/>
         <button
           role="menuitem"
-          :disabled="!viewerState.pageCount || !isDesktop || viewerState.transforming || viewerState.annotationDirty || !viewerState.pageEditAllowed"
+          :disabled="!viewerState.pageCount || !isDesktop || viewerState.annotationDirty || !viewerState.pageEditAllowed"
           :title="viewerState.annotationDirty ? '请先保存批注' : (!viewerState.pageEditAllowed ? '当前 PDF 禁止页面整理' : (!isDesktop ? '页面整理功能当前仅桌面版支持' : undefined))"
           @click="openPageOrganizer"
         >页面整理…</button>

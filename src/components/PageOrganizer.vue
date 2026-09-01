@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import PageOrganizerThumbnail from './PageOrganizerThumbnail.vue'
 import {
   clonePagePlan,
+  isDropBeforeHorizontalMidpoint,
   movePageGroup,
   reversePagePlan,
   rotatePagePlan,
@@ -103,7 +104,9 @@ function updatePointerDrop(event: PointerEvent) {
   if (!targetId || !pointerDrag?.active) return
   const rect = card.getBoundingClientRect()
   pageOrganizerState.dropTargetId = targetId
-  pageOrganizerState.dropBefore = event.clientY < rect.top + rect.height / 2
+  pageOrganizerState.dropBefore = isDropBeforeHorizontalMidpoint(
+    event.clientX, rect.left, rect.width,
+  )
   const scroll = card.closest('.page-organizer-scroll') as HTMLElement | null
   if (scroll) {
     const bounds = scroll.getBoundingClientRect()
@@ -135,6 +138,14 @@ function finishPointerDrag(event: PointerEvent) {
     ))
   }
   pointerDrag = null
+  pageOrganizerState.dragIds = []
+  pageOrganizerState.dropTargetId = null
+}
+
+function cancelPointerDrag(event: PointerEvent) {
+  if (!pointerDrag || pointerDrag.pointerId !== event.pointerId) return
+  pointerDrag = null
+  suppressClick = false
   pageOrganizerState.dragIds = []
   pageOrganizerState.dropTargetId = null
 }
@@ -195,7 +206,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           @pointer-down="beginPointerDrag(item.id, $event)"
           @pointer-move="pointerMove(item.id, $event)"
           @pointer-up="finishPointerDrag"
-          @pointer-cancel="finishPointerDrag"
+          @pointer-cancel="cancelPointerDrag"
         />
       </div>
     </div>

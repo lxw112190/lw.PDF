@@ -90,6 +90,13 @@ function onPointerUp(event: PointerEvent) {
   emit('pointerUp', event)
 }
 
+function onPointerCancel(event: PointerEvent) {
+  if (root.value?.hasPointerCapture?.(event.pointerId)) {
+    root.value.releasePointerCapture(event.pointerId)
+  }
+  emit('pointerCancel', event)
+}
+
 function isNearScrollViewport(): boolean {
   const card = root.value
   const scroll = card?.closest('.page-organizer-scroll') as HTMLElement | null
@@ -144,7 +151,7 @@ onBeforeUnmount(() => {
     @pointerdown="onPointerDown"
     @pointermove="emit('pointerMove', $event)"
     @pointerup="onPointerUp"
-    @pointercancel="emit('pointerCancel', $event)"
+    @pointercancel="onPointerCancel"
     @dragstart.prevent.stop
   >
     <span v-if="selected" class="page-organizer-check" aria-hidden="true">✓</span>

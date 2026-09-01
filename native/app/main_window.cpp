@@ -134,10 +134,6 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
       }
       return 0;
     }
-    case BridgeDispatcher::kTransformCompleteMessage:
-      if (state && state->bridge) state->bridge->CompleteTransform(lparam);
-      else BridgeDispatcher::DiscardTransformCompletion(lparam);
-      return 0;
     case BridgeDispatcher::kPageEditCompleteMessage:
       if (state && state->bridge) state->bridge->CompletePageEdit(lparam);
       else BridgeDispatcher::DiscardPageEditCompletion(lparam);

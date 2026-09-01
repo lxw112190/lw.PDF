@@ -72,6 +72,12 @@ export function movePageGroup(
   return remaining
 }
 
+export function isDropBeforeHorizontalMidpoint(
+  clientX: number, cardLeft: number, cardWidth: number,
+): boolean {
+  return clientX < cardLeft + cardWidth / 2
+}
+
 export class PageOrganizerHistory {
   private undoStack: PagePlanSnapshot[] = []
   private redoStack: PagePlanSnapshot[] = []
