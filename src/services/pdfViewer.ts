@@ -10,6 +10,14 @@ import { createPdfLoadingSource } from './pdfLoadingSource'
 import { ReadingPositionStore, normalizeReadingPosition, type ReadingPosition } from './readingPosition'
 import { confirmRecentFile } from './recentFiles'
 import { createFindCommand } from './search'
+import { appearanceState } from './eyeCare'
+import {
+  createPdfRenderQualityPolicy,
+  formatRenderQualityMessage,
+  inspectCanvasQuality,
+  renderQualityLogKey,
+  shouldReportRenderQuality,
+} from './renderQuality'
 import type { PdfSource } from '../types/pdf'
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl
@@ -23,6 +31,12 @@ interface ViewAreaEvent {
     left?: unknown
     top?: unknown
   }
+}
+
+interface PageRenderedEvent {
+  source?: { canvas?: HTMLCanvasElement | null }
+  pageNumber?: number
+  error?: unknown
 }
 
 export class PdfViewerController {
@@ -42,11 +56,13 @@ export class PdfViewerController {
   private annotationUiManager: any = null
   private annotationSaving = false
   private latestPosition: ReadingPosition | null = null
+  private readonly renderQualityReported = new Set<string>()
 
   init(container: HTMLDivElement, element: HTMLDivElement) {
     const eventBus = this.eventBus = new EventBus()
     this.linkService = new PDFLinkService({ eventBus })
     this.findController = new PDFFindController({ linkService: this.linkService, eventBus })
+    const renderQuality = createPdfRenderQualityPolicy()
     this.viewer = new PDFViewer({
       container,
       viewer: element,
@@ -56,10 +72,13 @@ export class PdfViewerController {
       textLayerMode: 1,
       annotationEditorMode: pdfjsLib.AnnotationEditorType.NONE,
       annotationEditorHighlightColors: '#fff176, #ffb74d, #81d4fa, #ce93d8',
+      maxCanvasPixels: renderQuality.maxCanvasPixels,
+      enableHWA: renderQuality.enableHWA,
     })
     this.linkService.setViewer(this.viewer)
     eventBus.on('pagesinit', () => this.restoreReadingPosition())
     eventBus.on('updateviewarea', (event: ViewAreaEvent) => this.captureReadingPosition(event))
+    eventBus.on('pagerendered', (event: PageRenderedEvent) => this.inspectRenderedPage(event))
     eventBus.on('pagechanging', (event: { pageNumber: number }) => {
       viewerState.pageNumber = event.pageNumber
     })
@@ -184,6 +203,7 @@ export class PdfViewerController {
     this.generation++
     this.pendingRestore = null
     this.latestPosition = null
+    this.renderQualityReported.clear()
     this.annotationUiManager = null
     this.annotationSaving = false
     viewerState.annotationDirty = false
@@ -217,6 +237,21 @@ export class PdfViewerController {
     viewerState.searchQuery = ''
     viewerState.searchCurrent = 0
     viewerState.searchTotal = 0
+  }
+
+  private inspectRenderedPage(event: PageRenderedEvent) {
+    if (event.error || !event.source?.canvas || !event.pageNumber) return
+    const sample = inspectCanvasQuality(event.source.canvas, event.pageNumber)
+    if (!sample || !shouldReportRenderQuality(sample, import.meta.env.DEV)) return
+    const scale = Number(this.viewer?.currentScale)
+    const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 1
+    const key = renderQualityLogKey(this.generation, sample, safeScale)
+    if (this.renderQualityReported.has(key)) return
+    this.renderQualityReported.add(key)
+    void window.lw?.invoke('diagnostics.info', {
+      area: 'pdf.render',
+      message: formatRenderQualityMessage(sample, safeScale, appearanceState.eyeCareEnabled),
+    }).catch(() => {})
   }
 
   flushReadingPosition() {

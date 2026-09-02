@@ -422,7 +422,7 @@ void BridgeDispatcher::Dispatch(const std::string& request, Reply reply) {
     if (method == "diagnostics.info") {
       const auto area = params.value("area", "");
       const auto message = params.value("message", "");
-      if (area != "pdf.open" || message.empty() || message.size() > 200U) {
+      if ((area != "pdf.open" && area != "pdf.render") || message.empty() || message.size() > 200U) {
         reply(Error(id, "BRIDGE_INVALID_PARAMS", "Invalid diagnostic event").dump());
         return;
       }
