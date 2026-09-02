@@ -323,7 +323,12 @@ void WebViewHost::Create(HWND window, const std::wstring& content_folder, std::s
         // drops lets the Win32 host receive WM_DROPFILES and issue a FileGrant
         // URL instead of copying the complete PDF through a DOM File object.
         if (SUCCEEDED(controller_.As(&controller4))) controller4->put_AllowExternalDrop(FALSE);
-        Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings; if (SUCCEEDED(webview_->get_Settings(&settings))) { settings->put_AreDevToolsEnabled(FALSE); settings->put_IsStatusBarEnabled(FALSE); settings->put_AreHostObjectsAllowed(FALSE); settings->put_IsWebMessageEnabled(TRUE); }
+        // The application owns PDF zoom through PDF.js. Browser-level zoom
+        // would scale the toolbar, dialogs and sidebars together with the PDF.
+        // Reset a zoom factor persisted by WebView2 and disable user zoom so
+        // Ctrl+wheel / Ctrl+plus can never resize the application chrome.
+        controller_->put_ZoomFactor(1.0);
+        Microsoft::WRL::ComPtr<ICoreWebView2Settings> settings; if (SUCCEEDED(webview_->get_Settings(&settings))) { settings->put_AreDevToolsEnabled(FALSE); settings->put_IsStatusBarEnabled(FALSE); settings->put_AreHostObjectsAllowed(FALSE); settings->put_IsWebMessageEnabled(TRUE); settings->put_IsZoomControlEnabled(FALSE); }
         Microsoft::WRL::ComPtr<ICoreWebView2_3> webview3; if (SUCCEEDED(webview_.As(&webview3))) webview3->SetVirtualHostNameToFolderMapping(L"app.lwpdf", content_folder.c_str(), COREWEBVIEW2_HOST_RESOURCE_ACCESS_KIND_DENY_CORS);
         webview_->AddScriptToExecuteOnDocumentCreated(kBridgeScript, nullptr);
         webview_->add_NavigationStarting(Callback<ICoreWebView2NavigationStartingEventHandler>([this](ICoreWebView2*, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT { LPWSTR uri = nullptr; if (FAILED(args->get_Uri(&uri)) || !uri) { if (uri) CoTaskMemFree(uri); args->put_Cancel(TRUE); return S_OK; } const std::wstring value(uri); CoTaskMemFree(uri); if (!IsTrustedAppUri(value)) { args->put_Cancel(TRUE); OpenPublicWebUri(window_, value); } else { UINT64 navigation_id = 0; if (SUCCEEDED(args->get_NavigationId(&navigation_id))) app_navigation_id_ = navigation_id; } return S_OK; }).Get(), &navigation_token_);
