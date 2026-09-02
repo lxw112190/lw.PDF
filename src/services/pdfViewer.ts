@@ -12,6 +12,14 @@ import { confirmRecentFile } from './recentFiles'
 import { createFindCommand } from './search'
 import { appearanceState } from './eyeCare'
 import {
+  LOW_QUALITY_PRINT_DPI,
+  PRINT_DPI,
+  PdfPrintService,
+  PrintCancelledError,
+  type PdfPrintPageOverview,
+} from './pdfPrint'
+import { printState, resetPrintState } from '../stores/printState'
+import {
   createPdfRenderQualityPolicy,
   formatRenderQualityMessage,
   inspectCanvasQuality,
@@ -57,6 +65,8 @@ export class PdfViewerController {
   private annotationSaving = false
   private latestPosition: ReadingPosition | null = null
   private readonly renderQualityReported = new Set<string>()
+  private readonly printService = new PdfPrintService()
+  private printCancelRequested = false
 
   init(container: HTMLDivElement, element: HTMLDivElement) {
     const eventBus = this.eventBus = new EventBus()
@@ -159,6 +169,11 @@ export class PdfViewerController {
       viewerState.annotationEditable = !pdf.isPureXfa && canEditAnnotations
       viewerState.pageEditAllowed = !permissions ||
         permissions.includes(pdfjsLib.PermissionFlag.ASSEMBLE)
+      viewerState.printAllowed = !permissions ||
+        permissions.includes(pdfjsLib.PermissionFlag.PRINT) ||
+        permissions.includes(pdfjsLib.PermissionFlag.PRINT_HIGH_QUALITY)
+      viewerState.printHighQualityAllowed = !permissions ||
+        permissions.includes(pdfjsLib.PermissionFlag.PRINT_HIGH_QUALITY)
       this.annotationUiManager = null
       const storage = pdf.annotationStorage
       storage.onSetModified = () => this.setAnnotationDirty(true)
@@ -199,6 +214,9 @@ export class PdfViewerController {
   }
 
   async close() {
+    this.printCancelRequested = true
+    this.printService.cancel()
+    resetPrintState()
     this.flushReadingPosition()
     this.generation++
     this.pendingRestore = null
@@ -212,6 +230,8 @@ export class PdfViewerController {
     viewerState.annotationMode = pdfjsLib.AnnotationEditorType.NONE
     viewerState.annotationEditable = true
     viewerState.pageEditAllowed = true
+    viewerState.printAllowed = true
+    viewerState.printHighQualityAllowed = true
     viewerState.annotationCanUndo = false
     viewerState.annotationCanRedo = false
     viewerState.annotationHasSelection = false
@@ -237,6 +257,77 @@ export class PdfViewerController {
     viewerState.searchQuery = ''
     viewerState.searchCurrent = 0
     viewerState.searchTotal = 0
+  }
+
+  async printDocument() {
+    const pdf = viewerState.document as unknown as pdfjsLib.PDFDocumentProxy | null
+    if (!pdf || !viewerState.pageCount || !viewerState.printAllowed ||
+        pageOrganizerState.active || this.printService.active) return
+    if (pdf.isPureXfa) {
+      viewerState.error = '当前版本暂不支持打印 XFA PDF。'
+      return
+    }
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
+    viewerState.searchVisible = false
+    this.printCancelRequested = false
+    printState.active = true
+    printState.current = 0
+    printState.total = viewerState.pageCount
+    printState.phase = 'preparing'
+    const dpi = viewerState.printHighQualityAllowed ? PRINT_DPI : LOW_QUALITY_PRINT_DPI
+    try {
+      const pagesOverview = await this.getPrintPagesOverview(pdf)
+      if (this.printCancelRequested) throw new PrintCancelledError()
+      await this.printService.print(pdf, pagesOverview, {
+        dpi,
+        onProgress: ({ current, total }) => {
+          printState.current = current
+          printState.total = total
+        },
+        onDialog: () => {
+          printState.phase = 'dialog'
+          void window.lw?.invoke('diagnostics.info', {
+            area: 'pdf.print',
+            message: `ready pages=${pagesOverview.length} dpi=${dpi}`,
+          }).catch(() => {})
+        },
+      })
+    } catch (error) {
+      if (error instanceof PrintCancelledError) return
+      const message = error instanceof Error ? error.name : 'UnknownError'
+      void window.lw?.invoke('diagnostics.error', {
+        area: 'pdf.print',
+        message: `failed ${message}`.slice(0, 1000),
+      }).catch(() => {})
+      viewerState.error = '打印准备失败，请重试。'
+    } finally {
+      resetPrintState()
+    }
+  }
+
+  cancelPrint() {
+    this.printCancelRequested = true
+    this.printService.cancel()
+  }
+
+  private async getPrintPagesOverview(pdf: pdfjsLib.PDFDocumentProxy): Promise<PdfPrintPageOverview[]> {
+    await this.viewer.pagesPromise
+    try {
+      const pages = this.viewer.getPagesOverview() as PdfPrintPageOverview[]
+      if (pages.length === pdf.numPages && pages.every(page =>
+        Number.isFinite(page.width) && Number.isFinite(page.height) &&
+        Number.isFinite(page.rotation))) return pages
+    } catch {
+      // Large or lazy documents may not have initialized every PDFPageView yet.
+    }
+    const pages: PdfPrintPageOverview[] = []
+    for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+      if (this.printCancelRequested) throw new PrintCancelledError()
+      const page = await pdf.getPage(pageNumber)
+      const viewport = page.getViewport({ scale: 1 })
+      pages.push({ width: viewport.width, height: viewport.height, rotation: viewport.rotation })
+    }
+    return pages
   }
 
   private inspectRenderedPage(event: PageRenderedEvent) {

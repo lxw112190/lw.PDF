@@ -17,6 +17,7 @@ A lightweight Windows desktop PDF viewer powered by Vue 3, TypeScript, PDF.js, a
 - One-click eye-care mode with subtly warmer PDF pages and reduced white glare
 - Reading annotations: highlights, Chinese free text, ink, undo, redo, delete, and Save As
 - Visual scanned-PDF page organizer with multi-select thumbnails, drag-to-reorder, reverse, rotation, undo/redo, and Save As
+- Reliable printing with a dedicated PDF.js print pipeline, unsaved annotations, progress, and cancellation during preparation
 - Native FileGrant with HTTP Range support for large PDFs without IPC or Base64 copies
 - Bundled PDF.js CMaps and standard fonts for PDFs with non-embedded Chinese fonts
 - About dialog, application icon, dynamic document titles, and Windows file associations

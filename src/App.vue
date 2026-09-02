@@ -7,6 +7,7 @@ import EmptyState from './components/EmptyState.vue'
 import LoadingOverlay from './components/LoadingOverlay.vue'
 import PageOrganizer from './components/PageOrganizer.vue'
 import PageOrganizerExitDialog from './components/PageOrganizerExitDialog.vue'
+import PrintProgressOverlay from './components/PrintProgressOverlay.vue'
 import PdfSidebar from './components/PdfSidebar.vue'
 import PdfViewerHost from './components/PdfViewerHost.vue'
 import SearchBox from './components/SearchBox.vue'
@@ -32,6 +33,7 @@ import {
   resetPageOrganizer,
 } from './stores/pageOrganizerState'
 import { savePagePlan } from './services/pageOrganizerSave'
+import { printState } from './stores/printState'
 
 const viewer = ref<any>(null)
 const input = ref<HTMLInputElement | null>(null)
@@ -48,6 +50,7 @@ const documentDirty = computed(() =>
 )
 
 async function openSource(source: any, position: any = null, bypassDirtyGuard = false) {
+  if (printState.active) return false
   const opened = await viewer.value?.open(source, position, bypassDirtyGuard)
   if (opened && pageOrganizerState.active) closeOrganizerAndRestoreReader()
   return opened
@@ -115,6 +118,7 @@ async function savePageOrganizer() {
 const sourceName = computed(() => viewerState.documentName || 'lw.PDF')
 
 function requestOpen() {
+  if (printState.active) return
   if (window.lw) void openNative()
   else input.value?.click()
 }
@@ -172,7 +176,7 @@ function hasDroppedFiles(event: DragEvent) {
 }
 
 function usesBrowserDrop(event: DragEvent) {
-  return !window.lw && hasDroppedFiles(event)
+  return !window.lw && !printState.active && hasDroppedFiles(event)
 }
 
 function onDragEnter(event: DragEvent) {
@@ -221,6 +225,11 @@ function onKeydown(event: KeyboardEvent) {
     requestOpen()
     return
   }
+  if (event.ctrlKey && event.key.toLowerCase() === 'p') {
+    event.preventDefault()
+    if (!pageOrganizerState.active && !printState.active) void viewer.value?.printDocument()
+    return
+  }
   if (event.ctrlKey && event.key.toLowerCase() === 'f') {
     event.preventDefault()
     if (pageOrganizerState.active) return
@@ -234,6 +243,10 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
   if (event.key === 'Escape') {
+    if (printState.active && printState.phase === 'preparing') {
+      viewer.value?.cancelPrint()
+      return
+    }
     if (viewerState.annotationMode !== 0) viewer.value?.setAnnotationMode(0)
     viewerState.searchVisible = false
     viewerState.error = null
@@ -334,6 +347,7 @@ onUnmounted(() => {
       @cancel="pageOrganizerExitVisible = false"
     />
     <AnnotationToolbar v-if="!pageOrganizerState.active" :viewer="viewer" @save="saveAnnotations" />
+    <PrintProgressOverlay @cancel="viewer?.cancelPrint()" />
     <!-- Keep PdfViewerHost mounted while the organizer is open. Its unmount
          hook closes the PDF document, which would leave every organizer
          thumbnail without a PDFDocumentProxy. v-show hides the reader while

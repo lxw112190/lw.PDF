@@ -3,14 +3,15 @@ import { ref } from 'vue'
 import { appearanceState, toggleEyeCareMode } from '../services/eyeCare'
 import { isDesktop } from '../services/native'
 import { viewerState } from '../stores/viewerState'
-defineProps<{ name: string; viewer: any }>(); const emit = defineEmits<{ open: []; about: []; integration: []; pageOrganizer: [] }>(); const page = ref(''); const menuOpen = ref(false)
+import { printState } from '../stores/printState'
+const props = defineProps<{ name: string; viewer: any }>(); const emit = defineEmits<{ open: []; about: []; integration: []; pageOrganizer: [] }>(); const page = ref(''); const menuOpen = ref(false)
 function go(viewer: any) { viewer?.setPage(Number(page.value)); page.value = '' }
 function toggleEyeCare() { toggleEyeCareMode(); menuOpen.value = false }
 function openPageOrganizer() { menuOpen.value = false; emit('pageOrganizer') }
 function printDocument() {
-  if (!viewerState.pageCount) return
+  if (!viewerState.pageCount || !viewerState.printAllowed || printState.active) return
   menuOpen.value = false
-  window.print()
+  void props.viewer?.printDocument()
 }
 function toggleAnnotation(viewer: any) {
   viewerState.annotationToolbarVisible = !viewerState.annotationToolbarVisible
@@ -30,7 +31,11 @@ function toggleAnnotation(viewer: any) {
     <button :disabled="!viewerState.pageCount" @click="viewer?.zoomIn()">+</button>
     <button :disabled="!viewerState.pageCount" @click="viewer?.fitWidth()">适合宽度</button>
     <button :disabled="!viewerState.pageCount" @click="viewer?.fitPage()">适合页面</button>
-    <button :disabled="!viewerState.pageCount" title="打印（Ctrl+P）" @click="printDocument">打印</button>
+    <button
+      :disabled="!viewerState.pageCount || !viewerState.printAllowed || printState.active"
+      :title="!viewerState.printAllowed ? '当前 PDF 禁止打印' : (printState.active ? '正在准备打印' : '打印（Ctrl+P）')"
+      @click="printDocument"
+    >打印</button>
     <span class="toolbar-spacer"/>
     <button :disabled="!viewerState.pageCount" @click="viewerState.sidebarVisible = !viewerState.sidebarVisible">侧栏</button>
     <button :disabled="!viewerState.pageCount" @click="viewerState.searchVisible = true">搜索</button>
