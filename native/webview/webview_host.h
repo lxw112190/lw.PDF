@@ -45,4 +45,6 @@ class WebViewHost {
   EventRegistrationToken title_token_{};
   UINT64 app_navigation_id_ = 0;
   bool failure_message_shown_ = false;
+
+  void ShowStartupFailure(const wchar_t* message) noexcept;
 };

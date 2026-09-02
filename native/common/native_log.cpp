@@ -1,5 +1,7 @@
 #include "common/native_log.h"
 
+#include "common/diagnostic_console.h"
+
 #include <ShlObj.h>
 #include <Windows.h>
 
@@ -40,10 +42,6 @@ class NativeLogger final {
   void Write(std::string_view level, std::string_view message) noexcept {
     try {
       std::lock_guard lock(mutex_);
-      if (path_.empty()) path_ = ResolveLogPath();
-      if (path_.empty()) return;
-      RotateIfNeeded();
-
       SYSTEMTIME now{};
       GetLocalTime(&now);
       char timestamp[32]{};
@@ -51,9 +49,18 @@ class NativeLogger final {
                   "%04hu-%02hu-%02hu %02hu:%02hu:%02hu.%03hu",
                   now.wYear, now.wMonth, now.wDay, now.wHour, now.wMinute,
                   now.wSecond, now.wMilliseconds);
-      std::ofstream output(path_, std::ios::binary | std::ios::app);
-      if (output) {
-        output << timestamp << " [" << level << "] " << Clean(message) << "\r\n";
+
+      const auto line = std::string(timestamp) + " [" + std::string(level) +
+          "] " + Clean(message);
+      const auto debug_line = line + "\r\n";
+      OutputDebugStringA(debug_line.c_str());
+      WriteDiagnosticConsole(line);
+
+      if (path_.empty()) path_ = ResolveLogPath();
+      if (!path_.empty()) {
+        RotateIfNeeded();
+        std::ofstream output(path_, std::ios::binary | std::ios::app);
+        if (output) output << line << "\r\n";
       }
     } catch (...) {
       // Logging must never affect the application operation being diagnosed.
@@ -83,6 +90,27 @@ NativeLogger& Logger() {
 }
 }  // namespace
 
+std::string FormatHresult(const std::int32_t value) noexcept {
+  try {
+    char buffer[11]{};
+    _snprintf_s(buffer, sizeof(buffer), _TRUNCATE, "0x%08X",
+                static_cast<std::uint32_t>(value));
+    return buffer;
+  } catch (...) {
+    return "0x00000000";
+  }
+}
+
+std::string FormatWin32Error(const std::uint32_t value) noexcept {
+  try {
+    char buffer[11]{};
+    _snprintf_s(buffer, sizeof(buffer), _TRUNCATE, "0x%08X", value);
+    return buffer;
+  } catch (...) {
+    return "0x00000000";
+  }
+}
+
 void NativeLogInfo(const std::string_view message) noexcept {
   Logger().Write("INFO", message);
 }
@@ -98,4 +126,3 @@ void NativeLogDebug(const std::string_view message) noexcept {
   (void)message;
 #endif
 }
-

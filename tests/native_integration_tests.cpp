@@ -1,5 +1,6 @@
 #include "app/command_line.h"
 #include "associations/file_association.h"
+#include "common/native_log.h"
 #include "common/utf8.h"
 #include "runtime/bounded_file_stream.h"
 #include "runtime/atomic_pdf_writer.h"
@@ -49,10 +50,38 @@ int main() {
   std::filesystem::create_directories(root);
   const auto pdf = root / "中文 PDF 文件.pdf";
   std::ofstream(pdf, std::ios::binary) << "%PDF-1.4\n";
+  const auto no_args = ParseLaunchOptions({L"lw.PDF.exe"});
+  Check(no_args.success && !no_args.options.console && !no_args.options.pdf_path,
+        "accepts a launch without arguments");
+  const auto console_only = ParseLaunchOptions({L"lw.PDF.exe", L"--console"});
+  Check(console_only.success && console_only.options.console,
+        "recognizes the hidden diagnostic console option");
+  const auto console_twice = ParseLaunchOptions(
+      {L"lw.PDF.exe", L"--console", L"--console"});
+  Check(console_twice.success && console_twice.options.console,
+        "accepts a repeated diagnostic console option");
+  const auto unknown_option = ParseLaunchOptions({L"lw.PDF.exe", L"--bad"});
+  Check(!unknown_option.success && unknown_option.console_requested == false,
+        "rejects unknown launch options");
+  const auto console_unknown_option = ParseLaunchOptions(
+      {L"lw.PDF.exe", L"--console", L"--bad"});
+  Check(!console_unknown_option.success && console_unknown_option.console_requested,
+        "preserves a requested console when parsing later arguments fails");
   const auto resolved = ResolveLaunchPdfPath(pdf.wstring());
   Check(resolved.has_value(), "accepts an existing PDF with a Unicode name");
   Check(!ResolveLaunchPdfPath((root / "not-a-pdf.txt").wstring()).has_value(),
         "rejects non-PDF arguments");
+  const auto pdf_with_console = ParseLaunchOptions(
+      {L"lw.PDF.exe", pdf.wstring(), L"--console"});
+  Check(pdf_with_console.success && pdf_with_console.options.console &&
+            pdf_with_console.options.pdf_path == pdf.lexically_normal().wstring(),
+        "accepts a PDF path before the diagnostic console option");
+  const auto two_pdfs = ParseLaunchOptions(
+      {L"lw.PDF.exe", pdf.wstring(), pdf.wstring()});
+  Check(!two_pdfs.success, "rejects multiple PDF paths");
+  Check(FormatHresult(static_cast<std::int32_t>(0x80070002)) == "0x80070002" &&
+            FormatWin32Error(ERROR_FILE_NOT_FOUND) == "0x00000002",
+        "formats HRESULT and Win32 errors as fixed-width hexadecimal");
   PdfFileGrantManager grants;
   const auto grant = grants.Create(pdf);
   Check(grant.url.rfind("https://file.lwpdf/", 0) == 0,

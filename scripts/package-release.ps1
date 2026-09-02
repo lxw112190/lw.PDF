@@ -53,6 +53,9 @@ Copy-Item -LiteralPath (Join-Path $projectRoot "THIRD_PARTY_NOTICES.md") -Destin
 $assetDirectory = Join-Path $packageRoot "docs\assets"
 New-Item -ItemType Directory -Force -Path $assetDirectory | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot "docs\assets\sponsor.jpg") -Destination $assetDirectory
+$docsDirectory = Join-Path $packageRoot "docs"
+New-Item -ItemType Directory -Force -Path $docsDirectory | Out-Null
+Copy-Item -LiteralPath (Join-Path $projectRoot "docs\troubleshooting.md") -Destination $docsDirectory
 
 Compress-Archive -LiteralPath $packageRoot -DestinationPath $archivePath -CompressionLevel Optimal
 $hash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()

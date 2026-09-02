@@ -267,6 +267,12 @@ WebViewHost::~WebViewHost() {
   if (controller_) controller_->Close();
 }
 
+void WebViewHost::ShowStartupFailure(const wchar_t* message) noexcept {
+  if (failure_message_shown_) return;
+  failure_message_shown_ = true;
+  MessageBoxW(window_, message, L"lw.PDF", MB_OK | MB_ICONERROR);
+}
+
 void WebViewHost::DiscardSave(LPARAM payload) {
   auto* completion = reinterpret_cast<SaveCompletion*>(payload);
   if (!completion) return;
@@ -311,13 +317,46 @@ void WebViewHost::CompleteSave(LPARAM payload) {
 void WebViewHost::Create(HWND window, const std::wstring& content_folder, std::shared_ptr<PdfFileGrantManager> grants, MessageHandler on_message, ReadyHandler on_ready) {
   window_ = window; grants_ = std::move(grants); on_message_ = std::move(on_message); on_ready_ = std::move(on_ready);
   const auto user_data = UserDataFolder();
+  NativeLogInfo("webview.runtime.check.begin");
+  LPWSTR runtime_version = nullptr;
+  const auto runtime_result = GetAvailableCoreWebView2BrowserVersionString(
+      nullptr, &runtime_version);
+  if (SUCCEEDED(runtime_result) && runtime_version) {
+    try {
+      NativeLogInfo("webview.runtime.version=" + WideToUtf8(runtime_version));
+    } catch (...) {
+      NativeLogError("webview.runtime.version.unavailable");
+    }
+    CoTaskMemFree(runtime_version);
+  } else {
+    NativeLogError("webview.runtime.unavailable hresult=" +
+                   FormatHresult(runtime_result));
+  }
+  NativeLogInfo("webview.environment.begin");
   const auto creating_environment = CreateCoreWebView2EnvironmentWithOptions(nullptr, user_data.c_str(), nullptr,
     Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>([this, content_folder](HRESULT result, ICoreWebView2Environment* environment) -> HRESULT {
-      if (FAILED(result) || !environment) { NativeLogError("webview.environment.failed hresult=" + std::to_string(static_cast<long>(result))); MessageBoxW(window_, L"未找到 WebView2 Runtime。请安装 Microsoft Edge WebView2 Evergreen Runtime。", L"lw.PDF", MB_OK | MB_ICONERROR); return result; }
+      if (FAILED(result) || !environment) {
+        NativeLogError("webview.environment.failed hresult=" + FormatHresult(result));
+        ShowStartupFailure(L"未找到 WebView2 Runtime。请安装 Microsoft Edge WebView2 Evergreen Runtime。\n\n可使用 lw.PDF.exe --console 获取详细诊断信息。");
+        return result;
+      }
+      NativeLogInfo("webview.environment.ok");
       environment_ = environment;
+      NativeLogInfo("webview.controller.begin");
       return environment->CreateCoreWebView2Controller(window_, Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>([this, content_folder](HRESULT status, ICoreWebView2Controller* controller) -> HRESULT {
-        if (FAILED(status) || !controller) { NativeLogError("webview.controller.failed hresult=" + std::to_string(static_cast<long>(status))); return status; }
-        controller_ = controller; controller_->get_CoreWebView2(&webview_);
+        if (FAILED(status) || !controller) {
+          NativeLogError("webview.controller.failed hresult=" + FormatHresult(status));
+          ShowStartupFailure(L"WebView2 控制器创建失败。\n\n可使用 lw.PDF.exe --console 获取详细诊断信息。");
+          return status;
+        }
+        NativeLogInfo("webview.controller.ok");
+        controller_ = controller;
+        const auto webview_result = controller_->get_CoreWebView2(&webview_);
+        if (FAILED(webview_result) || !webview_) {
+          NativeLogError("webview.core.failed hresult=" + FormatHresult(webview_result));
+          ShowStartupFailure(L"WebView2 核心对象创建失败。\n\n可使用 lw.PDF.exe --console 获取详细诊断信息。");
+          return webview_result;
+        }
         Microsoft::WRL::ComPtr<ICoreWebView2Controller4> controller4;
         // Desktop drops must stay in the native data plane. Disabling WebView
         // drops lets the Win32 host receive WM_DROPFILES and issue a FileGrant
@@ -399,15 +438,19 @@ void WebViewHost::Create(HWND window, const std::wstring& content_folder, std::s
           return S_OK;
         }).Get(), &title_token_);
         Resize();
+        NativeLogInfo("webview.navigation.begin");
         const auto navigation = webview_->Navigate(L"https://app.lwpdf/index.html");
-        if (FAILED(navigation)) NativeLogError("webview.navigate.failed hresult=" + std::to_string(static_cast<long>(navigation)));
-        else NativeLogDebug("webview.navigation_started");
+        if (FAILED(navigation)) {
+          NativeLogError("webview.navigate.failed hresult=" + FormatHresult(navigation));
+          ShowStartupFailure(L"lw.PDF 界面导航失败。\n\n可使用 lw.PDF.exe --console 获取详细诊断信息。");
+        }
         return navigation;
       }).Get());
     }).Get());
   if (FAILED(creating_environment)) {
     NativeLogError("webview.environment.start_failed hresult=" +
-                   std::to_string(static_cast<long>(creating_environment)));
+                   FormatHresult(creating_environment));
+    ShowStartupFailure(L"WebView2 启动失败。\n\n可使用 lw.PDF.exe --console 获取详细诊断信息。");
   }
 }
 

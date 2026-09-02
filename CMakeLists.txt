@@ -161,7 +161,7 @@ set_source_files_properties("${LWPDF_GENERATED_DIR}/frontend_bundle.rc"
 add_executable(lw_pdf WIN32
   native/app/main.cpp native/app/main_window.cpp native/app/command_line.cpp
   native/associations/file_association.cpp native/bridge/bridge_dispatcher.cpp
-  native/common/native_log.cpp
+  native/common/diagnostic_console.cpp native/common/native_log.cpp
   native/dialogs/file_dialog.cpp native/pdf/pdf_page_editor.cpp
   native/resources/frontend_bundle.cpp
   native/runtime/atomic_pdf_writer.cpp native/runtime/bounded_file_stream.cpp
@@ -203,7 +203,9 @@ if(LWPDF_BUILD_TESTING)
     native/runtime/bounded_file_stream.cpp
     native/runtime/file_grant.cpp
     native/runtime/http_range.cpp
-    native/runtime/recent_files.cpp)
+    native/runtime/recent_files.cpp
+    native/common/diagnostic_console.cpp
+    native/common/native_log.cpp)
   target_include_directories(lw_pdf_native_tests PRIVATE native)
   target_compile_definitions(lw_pdf_native_tests PRIVATE
     WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)

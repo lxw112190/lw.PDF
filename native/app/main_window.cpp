@@ -100,20 +100,24 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
   auto* state = reinterpret_cast<State*>(GetWindowLongPtrW(window, GWLP_USERDATA));
   switch (message) {
     case WM_CREATE: {
+      NativeLogInfo("window.wm_create.begin");
       const auto* create = reinterpret_cast<CREATESTRUCTW*>(lparam);
       const auto* launch_path = create ? static_cast<const std::optional<std::wstring>*>(create->lpCreateParams) : nullptr;
-      auto owned = std::make_unique<State>();
-      owned->grants = std::make_shared<PdfFileGrantManager>();
-      owned->recent_files =
-          std::make_shared<RecentFileStore>(DefaultRecentFilesPath());
-      owned->webview = std::make_unique<WebViewHost>();
-      owned->bridge = std::make_unique<BridgeDispatcher>(
-          window, owned->grants, owned->recent_files);
-      if (launch_path) owned->bridge->SetLaunchPath(*launch_path);
-      state = owned.release(); SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
       try {
+        auto owned = std::make_unique<State>();
+        owned->grants = std::make_shared<PdfFileGrantManager>();
+        owned->recent_files =
+            std::make_shared<RecentFileStore>(DefaultRecentFilesPath());
+        owned->webview = std::make_unique<WebViewHost>();
+        owned->bridge = std::make_unique<BridgeDispatcher>(
+            window, owned->grants, owned->recent_files);
+        if (launch_path) owned->bridge->SetLaunchPath(*launch_path);
+        state = owned.release(); SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+        NativeLogInfo("window.state.ready");
+        NativeLogInfo("frontend.prepare.begin");
         const auto folder = FrontendContentPath();
         if (!std::filesystem::exists(std::filesystem::path(folder) / L"index.html")) throw std::runtime_error("应用前端资源不完整，请重新下载 lw.PDF.exe。");
+        NativeLogInfo("frontend.prepare.ok");
         auto* bridge = state->bridge.get(); auto* webview = state->webview.get();
         webview->Create(window, folder, state->grants,
             [bridge](const std::string& request, WebViewHost::Reply reply) { bridge->Dispatch(request, std::move(reply)); },
@@ -128,9 +132,14 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
                                error.what());
               }
             });
+        NativeLogInfo("window.wm_create.ok");
       } catch (const std::exception& error) {
         NativeLogError(std::string("application.frontend.failed: ") + error.what());
         MessageBoxA(window, error.what(), "lw.PDF", MB_OK | MB_ICONERROR); PostMessageW(window, WM_CLOSE, 0, 0);
+      } catch (...) {
+        NativeLogError("application.frontend.failed: unknown exception");
+        MessageBoxW(window, L"lw.PDF 启动失败。", L"lw.PDF", MB_OK | MB_ICONERROR);
+        PostMessageW(window, WM_CLOSE, 0, 0);
       }
       return 0;
     }
@@ -184,6 +193,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wparam, LPARAM lpa
 }
 
 int RunMainWindow(HINSTANCE instance, const std::optional<std::wstring>& launch_path) {
+  NativeLogInfo("window.register.begin");
   WNDCLASSEXW window_class{sizeof(window_class)};
   window_class.lpfnWndProc = WindowProc; window_class.hInstance = instance;
   window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
@@ -194,21 +204,33 @@ int RunMainWindow(HINSTANCE instance, const std::optional<std::wstring>& launch_
   window_class.hIconSm = static_cast<HICON>(LoadImageW(instance, MAKEINTRESOURCEW(1), IMAGE_ICON,
       GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CXSMICON), LR_DEFAULTCOLOR | LR_SHARED));
   if (!RegisterClassExW(&window_class)) {
-    NativeLogError("window.register_class.failed error=" +
-                   std::to_string(GetLastError()));
+    const auto error = GetLastError();
+    NativeLogError("window.register_class.failed win32=" +
+                   std::to_string(error) +
+                   " hex=" + FormatWin32Error(error));
     return 1;
   }
+  NativeLogInfo("window.register.ok");
   const auto geometry = ValidateWindowGeometry(LoadWindowGeometry());
+  NativeLogInfo("window.geometry.loaded");
+  NativeLogInfo("window.create.begin");
   const auto window = CreateWindowExW(0, kClassName, L"lw.PDF", WS_OVERLAPPEDWINDOW,
       geometry.rect.left, geometry.rect.top, geometry.rect.right - geometry.rect.left,
       geometry.rect.bottom - geometry.rect.top, nullptr, nullptr, instance,
       const_cast<std::optional<std::wstring>*>(&launch_path));
   if (!window) {
-    NativeLogError("window.create.failed error=" +
-                   std::to_string(GetLastError()));
+    const auto error = GetLastError();
+    NativeLogError("window.create.failed win32=" +
+                   std::to_string(error) +
+                   " hex=" + FormatWin32Error(error));
     return 1;
   }
-  DragAcceptFiles(window, TRUE); ShowWindow(window, geometry.maximized ? SW_SHOWMAXIMIZED : SW_SHOW); UpdateWindow(window);
+  NativeLogInfo("window.create.ok");
+  DragAcceptFiles(window, TRUE);
+  ShowWindow(window, geometry.maximized ? SW_SHOWMAXIMIZED : SW_SHOW);
+  NativeLogInfo("window.show");
+  UpdateWindow(window);
+  NativeLogInfo("application.running");
   MSG message{}; while (GetMessageW(&message, nullptr, 0, 0) > 0) { TranslateMessage(&message); DispatchMessageW(&message); }
   return static_cast<int>(message.wParam);
 }
