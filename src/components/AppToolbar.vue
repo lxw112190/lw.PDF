@@ -7,6 +7,11 @@ defineProps<{ name: string; viewer: any }>(); const emit = defineEmits<{ open: [
 function go(viewer: any) { viewer?.setPage(Number(page.value)); page.value = '' }
 function toggleEyeCare() { toggleEyeCareMode(); menuOpen.value = false }
 function openPageOrganizer() { menuOpen.value = false; emit('pageOrganizer') }
+function printDocument() {
+  if (!viewerState.pageCount) return
+  menuOpen.value = false
+  window.print()
+}
 function toggleAnnotation(viewer: any) {
   viewerState.annotationToolbarVisible = !viewerState.annotationToolbarVisible
   if (!viewerState.annotationToolbarVisible && viewerState.annotationMode !== 0) viewer?.setAnnotationMode(0)
@@ -25,6 +30,7 @@ function toggleAnnotation(viewer: any) {
     <button :disabled="!viewerState.pageCount" @click="viewer?.zoomIn()">+</button>
     <button :disabled="!viewerState.pageCount" @click="viewer?.fitWidth()">适合宽度</button>
     <button :disabled="!viewerState.pageCount" @click="viewer?.fitPage()">适合页面</button>
+    <button :disabled="!viewerState.pageCount" title="打印（Ctrl+P）" @click="printDocument">打印</button>
     <span class="toolbar-spacer"/>
     <button :disabled="!viewerState.pageCount" @click="viewerState.sidebarVisible = !viewerState.sidebarVisible">侧栏</button>
     <button :disabled="!viewerState.pageCount" @click="viewerState.searchVisible = true">搜索</button>

@@ -20,5 +20,21 @@
 .about-sponsor figcaption { margin-top: 7px; font-size: 11px }
 .about-meta { margin-top: 18px }
 @media (max-width: 560px), (max-height: 680px) { .about-dialog { padding: 26px 20px 20px } .about-support { grid-template-columns: 1fr } .about-sponsor { width: min(170px, 100%); margin: 0 auto } }
+
+@media print {
+  @page { margin: 0 }
+  html, body, #app { width: auto; height: auto; min-height: 100%; overflow: visible }
+  .app-shell { display: block; height: auto; min-height: 0 }
+  .toolbar, .annotation-toolbar, .sidebar, .search-box, .loading, .empty-state,
+  .dialog-backdrop, .drop-overlay, .error-toast, .page-organizer { display: none !important }
+  .workspace { display: block; width: 100%; height: auto; min-height: 0; overflow: visible }
+  .viewer-area { position: static; width: 100%; min-height: 0 }
+  .pdf-viewer-container { position: static; inset: auto; width: 100%; overflow: visible; background: #fff }
+  .pdfViewer { padding: 0 }
+  .pdfViewer .page { margin: 0 auto; box-shadow: none; break-after: page; visibility: visible !important }
+  .pdfViewer .canvasWrapper { overflow: visible; contain: none }
+  .pdfViewer .canvasWrapper canvas { contain: none; visibility: visible !important }
+  .pdfViewer .page:last-child { break-after: auto }
+}
 .menu-check-item { display: flex !important; align-items: center; gap: 7px }.menu-check { width: 14px; flex: 0 0 14px; color: #356b3f; font-weight: 700; text-align: center }.menu-separator { display: block; height: 1px; margin: 4px 3px; background: var(--line) }
 .page-tools-dialog { width: min(560px, 100%); text-align: left }.page-tools-dialog h2 { margin-top: 0 }.tool-block { display: grid; gap: 10px; margin: 16px 0; padding: 12px 14px; border: 1px solid #dbe4ec; border-radius: 6px; color: #314254; text-align: left }.tool-block legend { padding: 0 5px; font-weight: 600; color: #263746 }.tool-hint { margin: 0 !important; color: #657180 !important }.tool-block button { justify-self: start }.rotate-targets { display: grid; gap: 8px; font-size: 13px }.rotate-targets label { display: flex; align-items: center; gap: 6px }.range-input { min-width: 120px; flex: 1; padding: 5px 7px; border: 1px solid #cbd5df; border-radius: 4px; color: #314254 }.rotate-actions { display: flex; flex-wrap: wrap; gap: 8px }.tool-busy { margin: 8px 0 !important; color: var(--blue) !important; font-weight: 600 }
