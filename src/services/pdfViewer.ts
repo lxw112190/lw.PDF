@@ -88,6 +88,7 @@ export class PdfViewerController {
       textLayerMode: 1,
       annotationEditorMode: pdfjsLib.AnnotationEditorType.NONE,
       annotationEditorHighlightColors: '#fff176, #ffb74d, #81d4fa, #ce93d8',
+      enablePrintAutoRotate: true,
       maxCanvasPixels: renderQuality.maxCanvasPixels,
       enableHWA: renderQuality.enableHWA,
     })

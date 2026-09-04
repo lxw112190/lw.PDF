@@ -32,8 +32,10 @@
   body.lwpdf-printing #lwpdf-print-container { display: block !important }
   #lwpdf-print-container .printed-page {
     position: relative;
+    box-sizing: border-box;
     margin: 0;
     overflow: hidden;
+    background: #fff;
     break-after: page;
     page-break-after: always;
   }

@@ -5,7 +5,9 @@ import {
   LOW_QUALITY_PRINT_DPI,
   PDF_POINTS_PER_INCH,
   printPixels,
+  printSafeMargin,
   PRINT_DPI,
+  PRINT_SAFE_MARGIN_PT,
   PrintCancelledError,
 } from '../src/services/pdfPrint'
 
@@ -26,6 +28,11 @@ describe('PDF print planning', () => {
 
   it('creates a zero-margin first-page print rule', () => {
     expect(createPrintPageStyle(a4)).toBe('@page { size: 595pt 842pt; margin: 0; }')
+  })
+
+  it('reserves a printer-safe inset without overwhelming small pages', () => {
+    expect(printSafeMargin(a4)).toBe(PRINT_SAFE_MARGIN_PT)
+    expect(printSafeMargin({ width: 200, height: 400, rotation: 0 })).toBe(10)
   })
 
   it('exposes a distinct cancellation error', () => {

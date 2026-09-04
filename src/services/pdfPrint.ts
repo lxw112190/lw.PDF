@@ -4,6 +4,9 @@ import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 export const PRINT_DPI = 150
 export const LOW_QUALITY_PRINT_DPI = 96
 export const PDF_POINTS_PER_INCH = 72
+// A quarter inch keeps page content inside the non-printable edge of common
+// office printers. Small custom pages cap this at 5% of the shorter side.
+export const PRINT_SAFE_MARGIN_PT = 18
 
 export interface PdfPrintPageOverview {
   width: number
@@ -42,6 +45,14 @@ export function hasEqualPageSizes(pages: PdfPrintPageOverview[]): boolean {
 
 export function createPrintPageStyle(page: PdfPrintPageOverview): string {
   return `@page { size: ${page.width}pt ${page.height}pt; margin: 0; }`
+}
+
+export function printSafeMargin(page: PdfPrintPageOverview): number {
+  return Math.max(0, Math.min(
+    PRINT_SAFE_MARGIN_PT,
+    page.width * 0.05,
+    page.height * 0.05,
+  ))
 }
 
 function waitForImage(image: HTMLImageElement): Promise<void> {
@@ -100,7 +111,9 @@ export class PdfPrintService {
     document.body.append(this.container)
     this.pageStyle = document.createElement('style')
     this.pageStyle.id = 'lwpdf-print-page-style'
-    this.pageStyle.textContent = createPrintPageStyle(pagesOverview[0])
+    const paper = pagesOverview[0]
+    const safeMargin = printSafeMargin(paper)
+    this.pageStyle.textContent = createPrintPageStyle(paper)
     document.head.append(this.pageStyle)
 
     try {
@@ -125,8 +138,12 @@ export class PdfPrintService {
         image.alt = `PDF 第 ${index + 1} 页`
         const printedPage = document.createElement('div')
         printedPage.className = 'printed-page'
-        printedPage.style.width = `${pagesOverview[index].width}pt`
-        printedPage.style.height = `${pagesOverview[index].height}pt`
+        // Use one paper box for the entire job and fit every rendered page
+        // inside it. This prevents mixed page sizes from overflowing the
+        // first paper size selected by Chromium's print pipeline.
+        printedPage.style.width = `${paper.width}pt`
+        printedPage.style.height = `${paper.height}pt`
+        printedPage.style.padding = `${safeMargin}pt`
         printedPage.append(image)
         this.container.append(printedPage)
         await waitForImage(image)
