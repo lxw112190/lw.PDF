@@ -44,8 +44,11 @@ interface ViewAreaEvent {
 interface PageRenderedEvent {
   source?: { canvas?: HTMLCanvasElement | null }
   pageNumber?: number
+  cssTransform?: boolean
   error?: unknown
 }
+
+const OPEN_READY_TIMEOUT_MS = 30_000
 
 export class PdfViewerController {
   private viewer!: PDFViewer
@@ -67,6 +70,9 @@ export class PdfViewerController {
   private readonly renderQualityReported = new Set<string>()
   private readonly printService = new PdfPrintService()
   private printCancelRequested = false
+  private openStartedAt = 0
+  private openTargetPageNumber = 1
+  private openReadyTimer: number | null = null
 
   init(container: HTMLDivElement, element: HTMLDivElement) {
     const eventBus = this.eventBus = new EventBus()
@@ -88,7 +94,10 @@ export class PdfViewerController {
     this.linkService.setViewer(this.viewer)
     eventBus.on('pagesinit', () => this.restoreReadingPosition())
     eventBus.on('updateviewarea', (event: ViewAreaEvent) => this.captureReadingPosition(event))
-    eventBus.on('pagerendered', (event: PageRenderedEvent) => this.inspectRenderedPage(event))
+    eventBus.on('pagerendered', (event: PageRenderedEvent) => {
+      this.inspectRenderedPage(event)
+      this.handleOpenPageRendered(event)
+    })
     eventBus.on('pagechanging', (event: { pageNumber: number }) => {
       viewerState.pageNumber = event.pageNumber
     })
@@ -122,7 +131,25 @@ export class PdfViewerController {
     await this.close()
     const id = ++this.generation
     viewerState.loading = true
+    viewerState.contentReady = false
     viewerState.error = null
+    viewerState.outline = []
+    viewerState.outlineLoaded = false
+    viewerState.outlineLoading = false
+    // Keep document capabilities disabled until permissions are known.
+    viewerState.annotationEditable = false
+    viewerState.pageEditAllowed = false
+    viewerState.printAllowed = false
+    viewerState.printHighQualityAllowed = false
+    this.beginOpenTiming()
+    this.openTargetPageNumber = 1
+    this.openReadyTimer = window.setTimeout(() => {
+      if (id !== this.generation || !viewerState.loading) return
+      viewerState.loading = false
+      viewerState.contentReady = false
+      viewerState.error = '当前页面加载时间过长，请重试或检查文件。'
+      this.logOpenTiming('first_view_timeout', `page=${this.openTargetPageNumber}`)
+    }, OPEN_READY_TIMEOUT_MS)
     try {
       this.source = source
       setCurrentGrant(source.kind === 'url' ? source.grantId : undefined)
@@ -136,13 +163,21 @@ export class PdfViewerController {
       const pdf = await task.promise
       if (id !== this.generation) {
         await pdf.destroy()
-        return
+        return false
       }
 
       this.fingerprint = pdf.fingerprints.find(value => !!value) ?? null
+      const storedPosition = positionOverride ?? (this.fingerprint ? this.positions.get(this.fingerprint) : null)
+      const targetPageNumber = Math.min(
+        Math.max(Math.round(storedPosition?.pageNumber ?? 1) || 1, 1),
+        pdf.numPages,
+      )
+      this.openTargetPageNumber = targetPageNumber
       this.pendingRestore = {
         generation: id,
-        position: positionOverride ?? (this.fingerprint ? this.positions.get(this.fingerprint) : null),
+        position: storedPosition
+          ? { ...storedPosition, pageNumber: targetPageNumber }
+          : null,
       }
       this.suppressPositionSave = true
       this.viewer.setDocument(pdf)
@@ -152,28 +187,8 @@ export class PdfViewerController {
       viewerState.documentName = source.name
       viewerState.pageCount = pdf.numPages
       viewerState.pageNumber = 1
-      let permissions: number[] | null = null
-      try {
-        permissions = await pdf.getPermissions()
-      } catch {
-        permissions = null
-      }
-      // PDF.js disables annotation editors without MODIFY_CONTENTS, while
-      // the PDF permission bit for annotations is MODIFY_ANNOTATIONS. Require
-      // both when a permission list is present so the toolbar never advertises
-      // an operation that the document does not authorize.
-      const canEditAnnotations = !permissions || (
-        permissions.includes(pdfjsLib.PermissionFlag.MODIFY_CONTENTS) &&
-        permissions.includes(pdfjsLib.PermissionFlag.MODIFY_ANNOTATIONS)
-      )
-      viewerState.annotationEditable = !pdf.isPureXfa && canEditAnnotations
-      viewerState.pageEditAllowed = !permissions ||
-        permissions.includes(pdfjsLib.PermissionFlag.ASSEMBLE)
-      viewerState.printAllowed = !permissions ||
-        permissions.includes(pdfjsLib.PermissionFlag.PRINT) ||
-        permissions.includes(pdfjsLib.PermissionFlag.PRINT_HIGH_QUALITY)
-      viewerState.printHighQualityAllowed = !permissions ||
-        permissions.includes(pdfjsLib.PermissionFlag.PRINT_HIGH_QUALITY)
+      this.logOpenTiming('document_ready', `pages=${pdf.numPages}`)
+      this.logOpenTiming('viewer_bound', `target=${targetPageNumber}`)
       this.annotationUiManager = null
       const storage = pdf.annotationStorage
       storage.onSetModified = () => this.setAnnotationDirty(true)
@@ -182,18 +197,17 @@ export class PdfViewerController {
       }
       this.setAnnotationDirty(false)
 
-      await confirmRecentFile(source.kind === 'url' ? source.grantId : undefined)
-      void window.lw?.invoke('diagnostics.info', {
-        area: 'pdf.open',
-        message: `pages=${pdf.numPages}`,
-      }).catch(() => {})
-      try {
-        viewerState.outline = (await pdf.getOutline() ?? []) as any
-      } catch {
-        viewerState.outline = []
-      }
+      // These operations are secondary to showing the target page.
+      void this.loadPermissions(pdf, id)
+      void confirmRecentFile(source.kind === 'url' ? source.grantId : undefined)
+      return true
     } catch (error: any) {
       console.error('PDF load failed', error)
+      if (id === this.generation) {
+        this.clearOpenReadyTimer()
+        viewerState.loading = false
+        viewerState.contentReady = false
+      }
       if (id === this.generation && error?.name !== 'AbortException') {
         const message = typeof error?.message === 'string'
           ? error.message
@@ -207,16 +221,112 @@ export class PdfViewerController {
       if (id === this.generation && source.kind === 'url' && source.grantId) {
         await revokeDesktopFile(source.grantId)
       }
-    } finally {
-      if (id === this.generation) viewerState.loading = false
+      return false
     }
-    return id === this.generation
+  }
+
+  private async loadPermissions(pdf: pdfjsLib.PDFDocumentProxy, generation: number) {
+    let permissions: number[] | null
+    try {
+      permissions = await pdf.getPermissions()
+    } catch (error) {
+      if (generation === this.generation && viewerState.document === pdf) {
+        const message = error instanceof Error ? error.name : 'UnknownError'
+        void window.lw?.invoke('diagnostics.error', {
+          area: 'pdf.open',
+          message: `permissions_failed ${message}`,
+        }).catch(() => {})
+      }
+      // Unknown permissions remain disabled; only a successful null result
+      // means that the document has no permission restrictions.
+      return
+    }
+    if (generation !== this.generation || viewerState.document !== pdf) return
+    // PDF.js disables annotation editors without MODIFY_CONTENTS, while
+    // the PDF permission bit for annotations is MODIFY_ANNOTATIONS. Require
+    // both when a permission list is present so the toolbar never advertises
+    // an operation that the document does not authorize.
+    const canEditAnnotations = !permissions || (
+      permissions.includes(pdfjsLib.PermissionFlag.MODIFY_CONTENTS) &&
+      permissions.includes(pdfjsLib.PermissionFlag.MODIFY_ANNOTATIONS)
+    )
+    viewerState.annotationEditable = !pdf.isPureXfa && canEditAnnotations
+    viewerState.pageEditAllowed = !permissions ||
+      permissions.includes(pdfjsLib.PermissionFlag.ASSEMBLE)
+    viewerState.printAllowed = !permissions ||
+      permissions.includes(pdfjsLib.PermissionFlag.PRINT) ||
+      permissions.includes(pdfjsLib.PermissionFlag.PRINT_HIGH_QUALITY)
+    viewerState.printHighQualityAllowed = !permissions ||
+      permissions.includes(pdfjsLib.PermissionFlag.PRINT_HIGH_QUALITY)
+    this.logOpenTiming('permissions_ready')
+  }
+
+  async ensureOutline() {
+    const pdf = viewerState.document
+    if (!pdf || viewerState.outlineLoaded || viewerState.outlineLoading) return
+    const generation = this.generation
+    viewerState.outlineLoading = true
+    try {
+      const outline = await pdf.getOutline()
+      if (generation !== this.generation || viewerState.document !== pdf) return
+      viewerState.outline = (outline ?? []) as any
+      viewerState.outlineLoaded = true
+      this.logOpenTiming('outline_ready', `items=${viewerState.outline.length}`)
+    } catch (error) {
+      if (generation !== this.generation || viewerState.document !== pdf) return
+      viewerState.outline = []
+      viewerState.outlineLoaded = true
+      const message = error instanceof Error ? error.name : 'UnknownError'
+      void window.lw?.invoke('diagnostics.error', {
+        area: 'pdf.open',
+        message: `outline_failed ${message}`,
+      }).catch(() => {})
+    } finally {
+      if (generation === this.generation && viewerState.document === pdf) {
+        viewerState.outlineLoading = false
+      }
+    }
+  }
+
+  private beginOpenTiming() {
+    this.openStartedAt = performance.now()
+    this.logOpenTiming('open_begin')
+  }
+
+  private clearOpenReadyTimer() {
+    if (this.openReadyTimer !== null) {
+      window.clearTimeout(this.openReadyTimer)
+      this.openReadyTimer = null
+    }
+  }
+
+  private handleOpenPageRendered(event: PageRenderedEvent) {
+    if (!viewerState.loading || event.cssTransform || !event.pageNumber ||
+        event.pageNumber !== this.openTargetPageNumber) return
+    const currentView = this.viewer.getPageView(event.pageNumber - 1)
+    if (!currentView || event.source !== currentView) return
+    this.clearOpenReadyTimer()
+    if (event.error) {
+      viewerState.loading = false
+      viewerState.contentReady = false
+      viewerState.error = '当前页面渲染失败。'
+      const message = event.error instanceof Error ? event.error.name : 'UnknownError'
+      void window.lw?.invoke('diagnostics.error', {
+        area: 'pdf.open',
+        message: `first_view_failed ${message}`,
+      }).catch(() => {})
+      return
+    }
+    viewerState.contentReady = true
+    viewerState.loading = false
+    this.logOpenTiming('first_view', `page=${event.pageNumber}`)
   }
 
   async close() {
     this.printCancelRequested = true
     this.printService.cancel()
     resetPrintState()
+    this.clearOpenReadyTimer()
     this.flushReadingPosition()
     this.generation++
     this.pendingRestore = null
@@ -237,6 +347,8 @@ export class PdfViewerController {
     viewerState.annotationHasSelection = false
     this.fingerprint = null
     this.suppressPositionSave = true
+    this.openStartedAt = 0
+    this.openTargetPageNumber = 1
     ;(this.viewer as any)?.setDocument(null)
     ;(this.linkService as any)?.setDocument(null)
     ;(this.findController as any)?.setDocument(null)
@@ -253,7 +365,11 @@ export class PdfViewerController {
     viewerState.document = null
     viewerState.documentName = ''
     viewerState.pageCount = 0
+    viewerState.loading = false
+    viewerState.contentReady = false
     viewerState.outline = []
+    viewerState.outlineLoaded = false
+    viewerState.outlineLoading = false
     viewerState.searchQuery = ''
     viewerState.searchCurrent = 0
     viewerState.searchTotal = 0
@@ -328,6 +444,15 @@ export class PdfViewerController {
       pages.push({ width: viewport.width, height: viewport.height, rotation: viewport.rotation })
     }
     return pages
+  }
+
+  private logOpenTiming(stage: string, extra = '') {
+    if (!this.openStartedAt) return
+    const elapsed = Math.round(performance.now() - this.openStartedAt)
+    void window.lw?.invoke('diagnostics.info', {
+      area: 'pdf.open',
+      message: `stage=${stage} elapsed=${elapsed}ms${extra ? ` ${extra}` : ''}`,
+    }).catch(() => {})
   }
 
   private inspectRenderedPage(event: PageRenderedEvent) {
